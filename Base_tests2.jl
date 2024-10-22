@@ -22,6 +22,14 @@ function valueAt(t::Tensor, index::Vector{Int})
     return t.data[flat_index]
 end
 
+function +(x::Tensor, y::Tensor)
+    data::Vector{Float64}
+    for (x_elt, y_elt) in zip(x, y)
+        push!(data, x_elt+y_elt)
+    end
+    return Tensor(data, x.shape)
+end
+   
 arr = [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
 shape = [2,2,2]
 tensor = Tensor(arr, shape)
