@@ -39,13 +39,3 @@ end
 function print(x::Tensor)
     print(x.data)
 end
-   
-arr = [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
-shape = [2,2,2]
-shape2 = [2,2,2]
-tensor = Tensor(arr, shape)
-index = [1, 1, 1]
-#print(valueAt(tensor, index))
-newtensor = Tensor(arr, shape) + Tensor(arr, shape2)
-print(newtensor)
-
