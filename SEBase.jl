@@ -1,7 +1,7 @@
 include("Exceptions.jl")
 using .Exceptions: raise_dimension_mismatch, raise_indexoutofbounds
 using Revise
-import Base: +, *, /, -, size, reshape
+import Base: +, *, /, -, ^, size, reshape
 
 mutable struct Tensor
     ndims::Int
@@ -20,6 +20,10 @@ function prod(array::Vector{Int})
         prod*=x
     end
     return prod
+end
+
+function reshape(t::Tensor, shape::Vector{Int})
+    t.shape = shape 
 end
 
 function valueAt(t::Tensor, index::Vector{Int})
@@ -47,13 +51,35 @@ function +(x::Tensor, y::Tensor)
     end
     return Tensor(data, x.shape)
 end
-   
-arr = [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
-shape = [2,2,2]
-shape2 = [2,2,2]
-tensor = Tensor(arr, shape)
-index = [1, 1, 1]
-println(valueAt(tensor, index))
-newtensor = Tensor(arr, shape) + Tensor(arr, shape2)
-println(newtensor)
+
+function *(x::Tensor, y::Tensor)
+    raise_dimension_mismatch(x.shape, y.shape)
+
+    data = Float64[]
+    for (x_elt, y_elt) in zip(x.data, y.data)
+        data = push!(data, x_elt*y_elt)
+    end
+    return Tensor(data, x.shape)
+end
+
+function -(x::Tensor, y::Tensor)
+    raise_dimension_mismatch(x.shape, y.shape)
+
+    data = Float64[]
+    for (x_elt, y_elt) in zip(x.data, y.data)
+        data = push!(data, x_elt-y_elt)
+    end
+    return Tensor(data, x.shape)
+end
+
+function /(x::Tensor, y::Tensor)
+    raise_dimension_mismatch(x.shape, y.shape)
+
+    data = Float64[]
+    for (x_elt, y_elt) in zip(x.data, y.data)
+        data = push!(data, x_elt/y_elt)
+    end
+    return Tensor(data, x.shape)
+end
+
 
