@@ -24,6 +24,7 @@ end
 
 function reshape(t::Tensor, shape::Vector{Int})
     t.shape = shape 
+    t.ndims = length(shape)
 end
 
 function valueAt(t::Tensor, index::Vector{Int})
@@ -81,5 +82,7 @@ function /(x::Tensor, y::Tensor)
     end
     return Tensor(data, x.shape)
 end
+
+
 
 

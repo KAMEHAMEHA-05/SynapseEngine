@@ -14,6 +14,16 @@ mutable struct Tensor
     end
 end
 
+function zeroTensor(shape::Vector{Int})
+    ndims = maximum([length(shape), 0])
+    data_units = 1
+    for x in shape
+        data_units*=x
+    end
+    data = zeros(data_units)
+    return Tensor(data, shape)
+end
+
 function prod(array::Vector{Int})
     prod = 1
     for x in array
@@ -48,7 +58,39 @@ function +(x::Tensor, y::Tensor)
     return Tensor(data, x.shape)
 end
    
+function discreteSummation(tensor_vector::Vector{Tensor})
+    shape = tensor_vector[1].shape
+    summed = zeroTensor(shape)
+    for x in tensor_vector
+        summed+=x
+    end
+    return summed
+end
+
+mutable struct DenseLayer
+    name::String
+    weight::Tensor
+    bias::Tensor
+    intake::Vector{Tensor}
+    state::Tensor
+    out::Tensor
+
+    function DenseLayer(name::String, units::Int)
+        intake = Tensor[]
+        state = discreteSummation(intake)
+        neuron =  new(name, [], [], [], intake, state, [])
+        return fill(neuron, 1, units)
+    end
+
+end
+
+
+
+
+
+#-------------------------------------<<< TESTING STUFF >>>----------------------------------------------------------------------------------
 arr = [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
+arr1 = [[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0], [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0], [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]]
 shape = [2,2,2]
 shape2 = [2,2,2]
 tensor = Tensor(arr, shape)
@@ -56,4 +98,8 @@ index = [1, 1, 1]
 println(valueAt(tensor, index))
 newtensor = Tensor(arr, shape) + Tensor(arr, shape2)
 println(newtensor)
+ntensor2 = discreteSummation([tensor, tensor, tensor])
+println(ntensor2)
+
+
 
