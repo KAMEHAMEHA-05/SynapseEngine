@@ -1,3 +1,7 @@
+module CoreUtils
+
+export Tensor, zeroTensor, prod, reshape, valueAt, +, *, -, /, discreteSummation
+
 include("Exceptions.jl")
 using .Exceptions: raise_dimension_mismatch, raise_indexoutofbounds
 using Revise
@@ -12,6 +16,15 @@ mutable struct Tensor
         ndims = maximum([length(shape), 0])
         return new(ndims, shape, data)
     end
+end
+
+function zeroTensor(shape::Vector{Int})
+    data_units = 1
+    for x in shape
+        data_units*=x
+    end
+    data = zeros(data_units)
+    return Tensor(data, shape)
 end
 
 function prod(array::Vector{Int})
@@ -83,6 +96,13 @@ function /(x::Tensor, y::Tensor)
     return Tensor(data, x.shape)
 end
 
+function discreteSummation(tensor_vector::Vector{Tensor})
+    shape = tensor_vector[1].shape
+    summed = zeroTensor(shape)
+    for x in tensor_vector
+        summed+=x
+    end
+    return summed
+end
 
-
-
+end

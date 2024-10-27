@@ -1,3 +1,10 @@
+module Layers
+
+export DenseLayer, ReLU
+
+include("CoreUtils.jl")
+using .CoreUtils: Tensor, discreteSummation
+
 mutable struct DenseLayer
     name::String
     weight::Tensor
@@ -9,8 +16,20 @@ mutable struct DenseLayer
     function DenseLayer(name::String, units::Int)
         intake = Tensor[]
         state = discreteSummation(intake)
-        neuron =  new(name, zeroTensor(intake[0].shape), zeroTensor(intake[0].shape), 0, intake, state, zeroTensor(intake[0].shape))
-        return structVector(units, neuron)
+        neuron =  new(name, [], [], [], intake, state, [])
+        return fill(neuron, 1, units)
     end
 
 end
+
+function ReLU(inp::Tensor)
+    for (i, x) in enumerate(inp.data)
+        if (x<0)
+            inp[i]=0
+        end
+    end
+    return inp
+end
+
+end
+

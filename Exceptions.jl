@@ -1,4 +1,5 @@
 module Exceptions
+
 export DimensionMismatchException, raise_dimension_mismatch, raise_indexoutofbounds
 
 struct DimensionMismatchException <: Exception
