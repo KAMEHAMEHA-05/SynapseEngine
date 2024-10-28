@@ -83,11 +83,22 @@ mutable struct Neuron
 
 end
 
-function DenseLayer(name::String, units::Int)
-    neuron =  Neuron(name)
-    return fill(neuron, 1, units)
+mutable struct DenseLayer
+    layer::Vector{Neuron}
+
+    function DenseLayer(name::String, units::Int)
+        layer =  [Neuron(name) for x in 1:units]
+        return new(layer)
+    end
 end
 
+mutable struct Model 
+    layers::Vector{DenseLayer}
+
+    function Model(layers::Vector{DenseLayer} = DenseLayer[])
+        return new(layers)
+    end
+end
 
 
 
