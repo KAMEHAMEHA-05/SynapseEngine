@@ -67,7 +67,7 @@ function discreteSummation(tensor_vector::Vector{Tensor})
     return summed
 end
 
-mutable struct DenseLayer
+mutable struct Neuron
     name::String
     weight::Tensor
     bias::Tensor
@@ -75,15 +75,18 @@ mutable struct DenseLayer
     state::Tensor
     out::Tensor
 
-    function DenseLayer(name::String, units::Int)
+    function Neuron(name::String)
         intake = Tensor[]
         state = discreteSummation(intake)
-        neuron =  new(name, [], [], [], intake, state, [])
-        return fill(neuron, 1, units)
+        return new(name, [], [], [], intake, state, [])
     end
 
 end
 
+function DenseLayer(name::String, units::Int)
+    neuron =  Neuron(name)
+    return fill(neuron, 1, units)
+end
 
 
 
