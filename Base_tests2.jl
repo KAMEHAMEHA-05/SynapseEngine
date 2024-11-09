@@ -121,7 +121,7 @@ end
 
 mutable struct Neuron
     name::String
-    weight::Tensor
+    weight::Vector{Tensor}
     bias::Tensor
     intake::Vector{Tensor}
     state::Tensor
@@ -130,7 +130,7 @@ mutable struct Neuron
     function Neuron(name::String, input_size::Vector{Int}, output_size::Vector{Int})
         intake = [zeroTensor(input_size)] # modify this so that intake and state are made common for the layer and not individual neurons
         state = zeroTensor(input_size)
-        weight = oneTensor([1, prod(input_size), output_size[3]]) 
+        weight = [oneTensor([1, prod(input_size), output_size[3]])]
         bias = zeroTensor(output_size) 
         out = zeroTensor(output_size) 
         neuron = new(name, weight, bias, intake, state, out)
@@ -184,9 +184,13 @@ function perform(neuron::Neuron)
     # println("State Shape: ", neuron.state.shape)
     # println("Weight Shape: ", neuron.weight.shape)
     # println("Bias Shape: ", neuron.bias.shape)
-
-    neuron.state = discreteSummation(neuron.intake)
-    neuron.state = unitmatmul(neuron.state, neuron.weight)
+    temp = Vector{Tensor}()
+    for x in neuron.intake
+        weight = neuron.weight[1]
+        push!(neuron.weight, weight)
+        push!(temp, unitmatmul(x, weight))
+    end
+    neuron.state = discreteSummation(temp)
     neuron.state = neuron.state + neuron.bias
     neuron.out = getfield(Main, Symbol(neuron.name))(neuron.state)
     return neuron.out
@@ -238,10 +242,11 @@ function base_test()
     addLayer!(model, DenseLayer("ReLU", 32, [1,1,64]))
     addLayer!(model, DenseLayer("ReLU", 1, [1,1,32]))
 
-    # addLayer!(model, DenseLayer("ReLU", 4, [1,1,8]))
-    # addLayer!(model, DenseLayer("ReLU", 1, [1,1,4]))
+    # addLayer!(model, DenseLayer("ReLU", 2, [1,1,8]))
+    # addLayer!(model, DenseLayer("ReLU", 2, [1,1,2]))
+    # addLayer!(model, DenseLayer("ReLU", 1, [1,1,2]))
 
-    compile(model, "mean-squared-error", "SDG", 0.01, ["accuracy"])
+    compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
     forwardPropagate(model, tensor)
     #println(model)
 end
