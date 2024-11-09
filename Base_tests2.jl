@@ -205,7 +205,6 @@ function forwardPropagate(model::Model, input::Tensor)
             push!(layer_out, neuron.out)
         end
         current_in = layer_out
-        println("layer")
     end
     return layer_out
 end
@@ -238,6 +237,10 @@ function base_test()
     addLayer!(model, DenseLayer("ReLU", 64, [1,1,128]))
     addLayer!(model, DenseLayer("ReLU", 32, [1,1,64]))
     addLayer!(model, DenseLayer("ReLU", 1, [1,1,32]))
+
+    # addLayer!(model, DenseLayer("ReLU", 4, [1,1,8]))
+    # addLayer!(model, DenseLayer("ReLU", 1, [1,1,4]))
+
     compile(model, "mean-squared-error", "SDG", 0.01, ["accuracy"])
     forwardPropagate(model, tensor)
     #println(model)
