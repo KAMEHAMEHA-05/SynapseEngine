@@ -130,7 +130,7 @@ mutable struct Neuron
     function Neuron(name::String, input_size::Vector{Int}, output_size::Vector{Int})
         intake = [zeroTensor(input_size)] # modify this so that intake and state are made common for the layer and not individual neurons
         state = zeroTensor(input_size)
-        weight = [oneTensor([1, prod(input_size), output_size[3]])]
+        weight = []
         bias = zeroTensor(output_size) 
         out = zeroTensor(output_size) 
         neuron = new(name, weight, bias, intake, state, out)
@@ -185,8 +185,10 @@ function perform(neuron::Neuron)
     # println("Weight Shape: ", neuron.weight.shape)
     # println("Bias Shape: ", neuron.bias.shape)
     temp = Vector{Tensor}()
+    input_size = neuron.state.shape
+    output_size = neuron.bias.shape
     for x in neuron.intake
-        weight = neuron.weight[1]
+        weight = oneTensor([1, prod(input_size), output_size[3]])
         push!(neuron.weight, weight)
         push!(temp, unitmatmul(x, weight))
     end
