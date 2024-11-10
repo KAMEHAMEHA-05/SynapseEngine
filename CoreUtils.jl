@@ -1,6 +1,6 @@
 module CoreUtils
 
-export Tensor, zeroTensor, prod, reshape, valueAt, +, *, -, /, discreteSummation
+export Tensor, zeroTensor, prod, reshape, valueAt, +, *, -, /, discreteSummation, unitmatmul
 
 include("Exceptions.jl")
 using .Exceptions: raise_dimension_mismatch, raise_indexoutofbounds
@@ -105,4 +105,28 @@ function discreteSummation(tensor_vector::Vector{Tensor})
     return summed
 end
 
+end
+
+function unitmatmul(x::Tensor, y::Tensor)
+    if length(x.shape) != 3 || length(y.shape) != 3
+        raise_dimension_mismatch(x.shape, y.shape)
+    end
+    if x.shape[3] != y.shape[2]
+        raise_dimension_mismatch(x.shape, y.shape)
+    end
+    out = Tensor()
+    out.ndims = 3
+    out.shape = [1, 1, y.shape[3]]
+
+    for i in 1:y.shape[3]
+        column = [y.data[(j - 1) * y.shape[3] + i] for j in 1:y.shape[2]]
+        
+        sum = 0.0
+        for (a, b) in zip(x.data, column)
+            sum += a * b
+        end
+        push!(out.data, sum)
+    end
+
+    return out
 end
