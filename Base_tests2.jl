@@ -123,17 +123,15 @@ mutable struct Neuron
     name::String
     weight::Vector{Tensor}
     bias::Tensor
-    intake::Vector{Tensor}
     state::Tensor
     out::Tensor
 
     function Neuron(name::String, input_size::Vector{Int}, output_size::Vector{Int})
-        intake = [zeroTensor(input_size)] # modify this so that intake and state are made common for the layer and not individual neurons
         state = zeroTensor(input_size)
         weight = []
         bias = zeroTensor(output_size) 
         out = zeroTensor(output_size) 
-        neuron = new(name, weight, bias, intake, state, out)
+        neuron = new(name, weight, bias, state, out)
         return neuron
     end
 end
@@ -179,7 +177,7 @@ function compile(model::Model, loss::String, optimizer::String, learning_rate::F
     model.metrics = metrics
 end
 
-function perform(neuron::Neuron)
+function perform(neuron::Neuron, intake::Vector{Tensor})
     # println("Neuron: ", neuron.name)
     # println("State Shape: ", neuron.state.shape)
     # println("Weight Shape: ", neuron.weight.shape)
@@ -187,7 +185,7 @@ function perform(neuron::Neuron)
     temp = Vector{Tensor}()
     input_size = neuron.state.shape
     output_size = neuron.bias.shape
-    for x in neuron.intake
+    for x in intake
         weight = oneTensor([1, prod(input_size), output_size[3]])
         push!(neuron.weight, weight)
         push!(temp, unitmatmul(x, weight))
@@ -206,8 +204,7 @@ function forwardPropagate(model::Model, input::Tensor)
     for layer in model.layers
         layer_out = Vector{Tensor}()
         for neuron in layer.layer
-            neuron.intake = current_in
-            perform(neuron)
+            perform(neuron, current_in)
             push!(layer_out, neuron.out)
         end
         current_in = layer_out
