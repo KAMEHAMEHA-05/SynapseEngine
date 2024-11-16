@@ -2,6 +2,8 @@ include("Exceptions.jl")
 using .Exceptions: raise_dimension_mismatch, raise_indexoutofbounds
 using Revise
 import Base: +, *, /, -, size, reshape
+using Random  # For randn and rand
+using LinearAlgebra 
 
 mutable struct Tensor
     ndims::Int
@@ -119,19 +121,40 @@ function flatten(inp::Tensor)
     return inp
 end
 
+function xavier_uniform(shape::Vector{Int})
+    n_in = shape[2]  # Input features
+    n_out = shape[3] # Output features
+    limit = sqrt(6.0 / (n_in + n_out))
+    data = (rand(prod(shape)) .- 0.5) .* (2 * limit)
+    return Tensor(data, shape)
+end
+
+function he_normal(shape::Vector{Int})
+    n_in = shape[2]  # Input features
+    std = sqrt(2.0 / n_in)
+    data = randn(prod(shape)) .* std
+    return Tensor(data, shape)
+end
+
+function uniform(shape::Vector{Int}, a::Float64=-0.1, b::Float64=0.1)
+    data = (rand(prod(shape)) .* (b - a)) .+ a
+    return Tensor(data, shape)
+end
+
 mutable struct Neuron
     name::String
     weight::Vector{Tensor}
     bias::Tensor
     state::Tensor
     out::Tensor
+    init_function::String
 
-    function Neuron(name::String, input_size::Vector{Int}, output_size::Vector{Int})
+    function Neuron(name::String, input_size::Vector{Int}, output_size::Vector{Int}, init_function::String="xavier_uniform")
         state = zeroTensor(input_size)
         weight = []
         bias = zeroTensor(output_size) 
         out = zeroTensor(output_size) 
-        neuron = new(name, weight, bias, state, out)
+        neuron = new(name, weight, bias, state, out, init_function)
         return neuron
     end
 end
@@ -140,14 +163,15 @@ mutable struct DenseLayer
     layer::Vector{Neuron}
     input_size::Vector{Int}
     output_size::Vector{Int}
+    init_function::String  # Add this field
 
-    function DenseLayer(name::String, units::Int, input_size::Vector{Int})
-        layer =  Vector{Neuron}()
+    function DenseLayer(name::String, units::Int, input_size::Vector{Int}, init_function::String="xavier_uniform")
+        layer = Vector{Neuron}()
         for x in 1:units 
-            neuron = Neuron(name, input_size, [1, 1, units])
+            neuron = Neuron(name, input_size, [1, 1, units], init_function)
             push!(layer, neuron)
         end
-        return new(layer, input_size, [1,units])
+        return new(layer, input_size, [1,units], init_function)
     end
 end
 
@@ -175,6 +199,21 @@ function compile(model::Model, loss::String, optimizer::String, learning_rate::F
     model.optimizer = optimizer
     model.learning_rate = learning_rate
     model.metrics = metrics
+
+    for layer in model.layers
+        for neuron in layer.layer
+            input_size = neuron.state.shape
+            output_size = neuron.bias.shape
+            weight_shape = [1, prod(input_size), output_size[3]]
+            
+            # Initialize weights using the specified initialization function
+            weight = getfield(Main, Symbol(neuron.init_function))(weight_shape)
+            push!(neuron.weight, weight)
+            
+            # Initialize bias (typically with zeros, but could add bias initialization option)
+            neuron.bias = zeroTensor(output_size)
+        end
+    end
 end
 
 function perform(neuron::Neuron, intake::Vector{Tensor})
@@ -234,19 +273,26 @@ function base_test()
 
     input_size = [1,2,4]
     model = Model(input_size)
-    addLayer!(model, DenseLayer("ReLU", 32, [1,1,8]))
-    addLayer!(model, DenseLayer("ReLU", 64, [1,1,32]))
-    addLayer!(model, DenseLayer("ReLU", 128, [1,1,64]))
-    addLayer!(model, DenseLayer("ReLU", 64, [1,1,128]))
-    addLayer!(model, DenseLayer("ReLU", 32, [1,1,64]))
-    addLayer!(model, DenseLayer("ReLU", 1, [1,1,32]))
+    # addLayer!(model, DenseLayer("ReLU", 32, [1,1,8]))
+    # addLayer!(model, DenseLayer("ReLU", 64, [1,1,32]))
+    # addLayer!(model, DenseLayer("ReLU", 128, [1,1,64]))
+    # addLayer!(model, DenseLayer("ReLU", 64, [1,1,128]))
+    # addLayer!(model, DenseLayer("ReLU", 32, [1,1,64]))
+    # addLayer!(model, DenseLayer("ReLU", 1, [1,1,32]))
 
     # addLayer!(model, DenseLayer("ReLU", 2, [1,1,8]))
     # addLayer!(model, DenseLayer("ReLU", 2, [1,1,2]))
     # addLayer!(model, DenseLayer("ReLU", 1, [1,1,2]))
 
-    compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
-    forwardPropagate(model, tensor)
+    # compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
+    # forwardPropagate(model, tensor)
+
+    addLayer!(model, DenseLayer("ReLU", 32, [1,1,8], "xavier_uniform"))
+    addLayer!(model, DenseLayer("ReLU", 64, [1,1,32], "he_normal"))
+    addLayer!(model, DenseLayer("ReLU", 128, [1,1,64], "uniform"))
+    addLayer!(model, DenseLayer("ReLU", 64, [1,1,128], "he_normal"))
+    addLayer!(model, DenseLayer("ReLU", 32, [1,1,64], "xavier_uniform"))
+    addLayer!(model, DenseLayer("ReLU", 1, [1,1,32], "xavier_uniform"))
     #println(model)
 end
 
