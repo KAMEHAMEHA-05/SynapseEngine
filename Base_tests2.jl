@@ -284,15 +284,15 @@ function base_test()
     # addLayer!(model, DenseLayer("ReLU", 2, [1,1,2]))
     # addLayer!(model, DenseLayer("ReLU", 1, [1,1,2]))
 
-    # compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
-    # forwardPropagate(model, tensor)
-
     addLayer!(model, DenseLayer("ReLU", 32, [1,1,8], "xavier_uniform"))
-    addLayer!(model, DenseLayer("ReLU", 64, [1,1,32], "xavier_uniform"))
-    addLayer!(model, DenseLayer("ReLU", 128, [1,1,64], "xavier_uniform"))
-    addLayer!(model, DenseLayer("ReLU", 64, [1,1,128], "xavier_uniform"))
+    addLayer!(model, DenseLayer("ReLU", 64, [1,1,32], "he_normal"))
+    addLayer!(model, DenseLayer("ReLU", 128, [1,1,64], "uniform"))
+    addLayer!(model, DenseLayer("ReLU", 64, [1,1,128], "he_normal"))
     addLayer!(model, DenseLayer("ReLU", 32, [1,1,64], "xavier_uniform"))
     addLayer!(model, DenseLayer("ReLU", 1, [1,1,32], "xavier_uniform"))
+
+    compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
+    forwardPropagate(model, tensor)
     #println(model)
 end
 
