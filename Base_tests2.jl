@@ -368,7 +368,6 @@ function update_parameters!(model::Model)
                 end
                 neuron.weight[i] = neuron.weight[i] + weight_update
             end
-            
             # Update bias
             bias_update = Tensor(Float64[], neuron.bias.shape)
             for i in 1:length(neuron.bias.data)
