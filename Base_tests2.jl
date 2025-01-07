@@ -68,6 +68,30 @@ function +(x::Tensor, y::Tensor)
     return Tensor(data, x.shape)
 end
 
+function -(x::Tensor, y::Tensor)
+    raise_dimension_mismatch(x.shape, y.shape)
+
+    data = Float64[]
+    for (x_elt, y_elt) in zip(x.data, y.data)
+        data = push!(data, x_elt-y_elt)
+    end
+    return Tensor(data, x.shape)
+end
+
+function scalar_mult(input::Tensor, scale::Int64)
+    for (i,x) in enumerate(input.data)
+        input.data[i] = x*s 
+    end
+    return input
+end
+
+function scalar_div(input::Tensor, scale::Int64)
+    for (i,x) in enumerate(input.data)
+        input.data[i] = x/scale  
+    end
+    return input
+end
+
 function unitmatmul(x::Tensor, y::Tensor)
     # Check dimensions for matrix multiplication compatibility
     if length(x.shape) != 3 || length(y.shape) != 3
@@ -250,15 +274,6 @@ function perform(neuron::Neuron, intake::Vector{Tensor})
     return neuron.out
 end
 
-function mse_derivative(predicted::Tensor, target::Tensor)
-    raise_dimension_mismatch(predicted.shape, target.shape)
-    error = Tensor(Float64[], predicted.shape)
-    for i in 1:length(predicted.data)
-        push!(error.data, 2 * (predicted.data[i] - target.data[i]))
-    end
-    return error
-end
-
 function forwardPropagate(model::Model, input::Tensor)
     input = flatten(input)
     current_in = [input]
@@ -274,145 +289,16 @@ function forwardPropagate(model::Model, input::Tensor)
     return layer_out
 end
 
-function backward(neuron::Neuron, input::Tensor, upstream_gradient::Tensor)
-    # Calculate local gradient based on activation function
-    if neuron.name == "ReLU"
-        local_grad = ReLU_derivative(neuron.state)
-    else
-        error("Unsupported activation function: $(neuron.name)")
+function mean_squared_error(predicted::Vector{Tensor}, real::Vector{Tensor})
+    n = length(predicted)
+    mse = zeroTensor([1,1,1])
+    for (y_r, y_p) in zip(real, predicted)
+        error = y_r - y_p
+        mse+=unitmatmul(error, error)
     end
-    
-    # Calculate delta (local gradient * upstream gradient)
-    neuron.delta = Tensor(Float64[], local_grad.shape)
-    for i in 1:length(local_grad.data)
-        push!(neuron.delta.data, local_grad.data[i] * upstream_gradient.data[i])
-    end
-    
-    # Calculate weight gradients
-    input_flat = flatten(input)
-    for i in 1:length(neuron.weight)
-        grad = Tensor(Float64[], neuron.weight[i].shape)
-        for j in 1:length(input_flat.data)
-            for k in 1:length(neuron.delta.data)
-                push!(grad.data, input_flat.data[j] * neuron.delta.data[k])
-            end
-        end
-        if i <= length(neuron.weight_gradients)
-            neuron.weight_gradients[i] = grad
-        else
-            push!(neuron.weight_gradients, grad)
-        end
-    end
-    
-    # Calculate bias gradient
-    neuron.bias_gradient = neuron.delta
-    
-    # Calculate and return gradient for previous layer
-    prev_gradient = Tensor(Float64[], input.shape)
-    for i in 1:length(input_flat.data)
-        sum = 0.0
-        for j in 1:length(neuron.delta.data)
-            for w in neuron.weight
-                sum += w.data[i * length(neuron.delta.data) + j] * neuron.delta.data[j]
-            end
-        end
-        push!(prev_gradient.data, sum)
-    end
-    
-    return prev_gradient
+    mse = scalar_div(mse, n)
+    return mse
 end
-
-function backpropagate!(model::Model, input::Tensor, target::Tensor, output::Vector{Tensor})
-    if length(output) != length(target.data)
-        raise_dimension_mismatch([length(output)], [length(target.data)])
-    end
-    
-    # Calculate initial gradient from loss function
-    current_gradient = mse_derivative(output[1], target)
-    
-    # Iterate through layers in reverse
-    layer_input = input
-    for layer_idx in length(model.layers):-1:1
-        layer = model.layers[layer_idx]
-        layer_gradients = Vector{Tensor}()
-        
-        # Calculate gradients for each neuron in the layer
-        for neuron_idx in length(layer.layer):-1:1
-            neuron = layer.layer[neuron_idx]
-            neuron_gradient = backward(neuron, layer_input, current_gradient)
-            push!(layer_gradients, neuron_gradient)
-        end
-        
-        # Update current gradient for next layer
-        current_gradient = discreteSummation(layer_gradients)
-        
-        # Update layer input for next iteration
-        if layer_idx > 1
-            layer_input = model.layers[layer_idx-1].layer[1].out
-        end
-    end
-end
-
-# Update weights and biases using gradient descent
-function update_parameters!(model::Model)
-    for layer in model.layers
-        for neuron in layer.layer
-            # Update weights
-            for i in 1:length(neuron.weight)
-                weight_update = Tensor(Float64[], neuron.weight[i].shape)
-                for j in 1:length(neuron.weight[i].data)
-                    grad_value = j <= length(neuron.weight_gradients[i].data) ? 
-                                neuron.weight_gradients[i].data[j] : 0.0
-                    update = -model.learning_rate * grad_value
-                    push!(weight_update.data, update)
-                end
-                neuron.weight[i] = neuron.weight[i] + weight_update
-            end
-            # Update bias
-            bias_update = Tensor(Float64[], neuron.bias.shape)
-            for i in 1:length(neuron.bias.data)
-                update = -model.learning_rate * neuron.bias_gradient.data[i]
-                push!(bias_update.data, update)
-            end
-            neuron.bias = neuron.bias + bias_update
-        end
-    end
-end
-
-# Training function that combines forward and backward passes
-function train_step!(model::Model, input::Tensor, target::Tensor)
-    # Forward pass
-    output = forwardPropagate(model, input)
-    
-    # Backward pass
-    backpropagate!(model, input, target, output)
-    
-    # Update parameters
-    update_parameters!(model)
-    
-    # Calculate and return loss
-    loss = 0.0
-    for (pred, targ) in zip(output[1].data, target.data)
-        loss += (pred - targ)^2
-    end
-    return loss / length(output[1].data)
-end
-
-# Training loop for multiple epochs
-function train!(model::Model, inputs::Vector{Tensor}, targets::Vector{Tensor}, epochs::Int)
-    for epoch in 1:epochs
-        total_loss = 0.0
-        for (input, target) in zip(inputs, targets)
-            loss = train_step!(model, input, target)
-            total_loss += loss
-        end
-        avg_loss = total_loss / length(inputs)
-        println("Epoch $epoch: Average Loss = $avg_loss")
-    end
-end
-
-
-
 
 
 
@@ -452,20 +338,8 @@ function base_test()
     addLayer!(model, DenseLayer("ReLU", 1, [1,1,32], "xavier_uniform"))
 
     compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
-    forwardPropagate(model, tensor)
-
-    model = Model([1,2,4])
-    addLayer!(model, DenseLayer("ReLU", 32, [1,1,8]))
-    addLayer!(model, DenseLayer("ReLU", 1, [1,1,32]))
-    compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
-
-    # Prepare your training data
-    inputs = [Tensor([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0], [1,2,4])]
-    targets = [Tensor([1.0], [1,1,1])]
-
-    # Train the model
-    train!(model, inputs, targets, 10)  # Train for 10 epochs
-    #println(model)
+    ypred = forwardPropagate(model, tensor)
+    mean_squared_error([Tensor([1.0376293541461623e19], [1, 1, 1])], ypred)
 end
 
 base_test()
