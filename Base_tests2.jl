@@ -299,7 +299,7 @@ function mean_squared_error(predicted::Vector{Tensor}, real::Vector{Tensor})
     mse = zeroTensor([1,1,1])
     for (y_r, y_p) in zip(real, predicted)
         error = y_r - y_p
-        #println(error)
+        # println(error)
         mse+=unitmatmul(error, error)
         # println(mse)
         # println("-----------------")
