@@ -238,7 +238,7 @@ function compile(model::Model, loss::String, optimizer::String, learning_rate::F
     model.optimizer = optimizer
     model.learning_rate = learning_rate
     model.metrics = metrics
-
+    output_count = 1 # Modify this number to enable mulitple inputs and also add a parameter to the function for the same.
     for layer in model.layers
         for neuron in layer.layer
             input_size = neuron.state.shape
@@ -246,12 +246,15 @@ function compile(model::Model, loss::String, optimizer::String, learning_rate::F
             weight_shape = [1, prod(input_size), output_size[3]]
             
             # Initialize weights using the specified initialization function
-            weight = getfield(Main, Symbol(neuron.init_function))(weight_shape)
-            push!(neuron.weight, weight)
+            for x in 1:output_count
+                weight = getfield(Main, Symbol(neuron.init_function))(weight_shape)
+                push!(neuron.weight, weight)
+            end
             
             # Initialize bias (typically with zeros, but could add bias initialization option)
             neuron.bias = zeroTensor(output_size)
         end
+        output_count = length(layer.layer)
     end
 end
 
@@ -263,9 +266,10 @@ function perform(neuron::Neuron, intake::Vector{Tensor})
     temp = Vector{Tensor}()
     input_size = neuron.state.shape
     output_size = neuron.bias.shape
-    for x in intake
-        weight = oneTensor([1, prod(input_size), output_size[3]])
-        push!(neuron.weight, weight)
+    for (i,x) in enumerate(intake)
+        #weight = oneTensor([1, prod(input_size), output_size[3]])
+        #push!(neuron.weight, weight)
+        weight = neuron.weight[i]
         push!(temp, unitmatmul(x, weight))
     end
     neuron.state = discreteSummation(temp)
@@ -291,10 +295,14 @@ end
 
 function mean_squared_error(predicted::Vector{Tensor}, real::Vector{Tensor})
     n = length(predicted)
+    println(n)
     mse = zeroTensor([1,1,1])
     for (y_r, y_p) in zip(real, predicted)
         error = y_r - y_p
+        #println(error)
         mse+=unitmatmul(error, error)
+        # println(mse)
+        # println("-----------------")
     end
     mse = scalar_div(mse, n)
     return mse
@@ -309,7 +317,9 @@ function base_test()
     arr1 = [[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0], [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0], [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]]
     shape = [1,2,4]
     shape2 = [2,2,2]
-    tensor = Tensor(arr, shape)
+    shape3 = [1,1,1]
+    arr3 = [1.0]
+    tensor = Tensor(arr3, shape3)
     # index = [1, 1, 1]
     # println(valueAt(tensor, index))
     # newtensor = Tensor(arr, shape) + Tensor(arr, shape2)
@@ -317,7 +327,8 @@ function base_test()
     # ntensor2 = discreteSummation([tensor, tensor, tensor])
     # println(ntensor2)
 
-    input_size = [1,2,4]
+    #input_size = [1,2,4]
+    input_size = [1,1,1]
     model = Model(input_size)
     # addLayer!(model, DenseLayer("ReLU", 32, [1,1,8]))
     # addLayer!(model, DenseLayer("ReLU", 64, [1,1,32]))
@@ -330,16 +341,21 @@ function base_test()
     # addLayer!(model, DenseLayer("ReLU", 2, [1,1,2]))
     # addLayer!(model, DenseLayer("ReLU", 1, [1,1,2]))
 
-    addLayer!(model, DenseLayer("ReLU", 32, [1,1,8], "xavier_uniform"))
+    addLayer!(model, DenseLayer("ReLU", 32, [1,1,1], "uniform"))
     addLayer!(model, DenseLayer("ReLU", 64, [1,1,32], "he_normal"))
     addLayer!(model, DenseLayer("ReLU", 128, [1,1,64], "uniform"))
     addLayer!(model, DenseLayer("ReLU", 64, [1,1,128], "he_normal"))
     addLayer!(model, DenseLayer("ReLU", 32, [1,1,64], "xavier_uniform"))
     addLayer!(model, DenseLayer("ReLU", 1, [1,1,32], "xavier_uniform"))
 
+    # addLayer!(model, DenseLayer("ReLU", 16, [1,1,1], "uniform"))
+    # addLayer!(model, DenseLayer("ReLU", 8, [1,1,16], "he_normal"))
+    # addLayer!(model, DenseLayer("ReLU", 1, [1,1,8], "xavier_uniform"))
+
     compile(model, "mean-squared-error", "SGD", 0.01, ["accuracy"])
     ypred = forwardPropagate(model, tensor)
-    mean_squared_error([Tensor([1.0376293541461623e19], [1, 1, 1])], ypred)
+    println(ypred)
+    mean_squared_error([Tensor([1.0], [1, 1, 1])], ypred)
 end
 
 base_test()
