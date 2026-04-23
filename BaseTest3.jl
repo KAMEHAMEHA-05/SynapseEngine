@@ -120,6 +120,17 @@ function ReLU(t::Tensor)
     return out
 end
 
+function LeakyReLU(t::Tensor, alpha=0.01)
+    t.visited = false
+    out = Tensor(max.(t.data, alpha .* t.data))
+    out.parents = [t]
+    out.backward = ()->begin
+        ensure_grad!(t)
+        t.grad .+= ((t.data .> 0) .+ alpha .* (t.data .<= 0)) .* out.grad
+    end
+    return out
+end
+
 function Linear(t::Tensor)
     t.visited = false
     out = Tensor(t.data)
@@ -180,7 +191,7 @@ function ones_init(::Type{T}, out_dim, in_dim) where T
 end
 
 function xavier_init(::Type{T}, out_dim, in_dim) where T
-    scale = T(sqrt(1.0 / in_dim))
+    scale = T(sqrt(2.0 / in_dim))
     return randn(T, out_dim, in_dim) .* scale, zeros(T, out_dim)
 end
 
@@ -248,13 +259,16 @@ struct Model
     forward::Function
 end
 
+using Random
+Random.seed!(48)
+
 T = Float32
-l1 = Layer(T, 3, 5, xavier_init, ReLU)
-l2 = Layer(T, 5, 7, xavier_init, ReLU)
-l3 = Layer(T, 5, 7, xavier_init, ReLU)
+l1 = Layer(T, 3, 5, xavier_init, LeakyReLU)
+l2 = Layer(T, 5, 7, xavier_init, LeakyReLU)
+l3 = Layer(T, 5, 7, xavier_init, LeakyReLU)
 l4 = Layer(T, 7, 2, xavier_init, Linear)
 l5 = Layer(T, 7, 2, xavier_init, Linear)
-l6 = Layer(T, 2, 2, identity_init, ReLU)
+l6 = Layer(T, 7, 2, xavier_init, LeakyReLU)
 l7 = Layer(T, 2, 1, xavier_init, Linear)
 
 model = Model(
@@ -263,8 +277,8 @@ model = Model(
         x = l1(x)
         x1 = l2(x)
         x2 = l3(x)
-        x3 = l4(x1) + l5(x2)
-        x = l6(x3)
+        # x3 = l4(x1) + l5(x2)
+        x = l6(x2)
         return l7(x)
     end
 )
@@ -296,10 +310,14 @@ function train!(model::Model, x::Tensor, y::Tensor, lr::Real, loss_fn::F = mse_l
     loss = loss_fn(pred, y)
     backprop(loss)
     for layer in model.layers
-        clip_grad!(layer, 1.0)
+        clip_grad!(layer, 1.0)  # Clip gradients to prevent exploding gradients
         if layer.trainable
-            layer.w.data .-= lr .* layer.w.grad
-            layer.b.data .-= lr .* layer.b.grad
+            if layer.w.grad !== nothing
+                layer.w.data .-= lr .* layer.w.grad
+            end
+            if layer.b.grad !== nothing
+                layer.b.data .-= lr .* layer.b.grad
+            end
         end
     end
     return loss.data[1]
@@ -316,7 +334,7 @@ function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn
     end
 end
 
-fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.01, mse_loss)
+fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.03, mse_loss)
 
 
 
