@@ -10,6 +10,7 @@ mutable struct Tensor{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
     grad::Union{Nothing, A}
     parents::Vector{Tensor}
     backward::Union{Nothing, Function}
+    visited::Bool
 end
 
 Base.size(t::Tensor) = size(t.data)
@@ -18,7 +19,7 @@ Base.setindex!(t::Tensor, v, I...) = (t.data[I...] = v)
 Base.IndexStyle(::Type{<:Tensor}) = IndexStyle(Array)
 
 Tensor(data::AbstractArray{T,N}) where {T,N} =
-    Tensor{T,N,typeof(data)}(data, nothing, [], ()->nothing)
+    Tensor{T,N,typeof(data)}(data, nothing, [], ()->nothing, false)
 
 function ensure_grad!(t::Tensor)
     if t.grad === nothing
@@ -27,6 +28,8 @@ function ensure_grad!(t::Tensor)
 end
 
 function Base.:+(a::Tensor, b::Tensor)
+    a.visited = false
+    b.visited = false
     out = Tensor(a.data + b.data)
     out.parents = [a, b]
     out.backward = ()->begin
@@ -40,6 +43,8 @@ end
 
 
 function Base.:-(a::Tensor, b::Tensor)
+    a.visited = false
+    b.visited = false
     out = Tensor(a.data .- b.data)
     out.parents = [a, b]
     out.backward = ()->begin
@@ -52,6 +57,8 @@ function Base.:-(a::Tensor, b::Tensor)
 end
 
 function Base.:*(a::Tensor, b::Tensor)
+    a.visited = false
+    b.visited = false
     out = Tensor(a.data .* b.data)
     out.parents = [a, b]
     out.backward = ()->begin
@@ -64,6 +71,8 @@ function Base.:*(a::Tensor, b::Tensor)
 end
 
 function Base.:/(a::Tensor, b::Tensor)
+    a.visited = false
+    b.visited = false
     out = Tensor(a.data ./ b.data)
     out.parents = [a, b]
     out.backward = ()->begin
@@ -76,6 +85,8 @@ function Base.:/(a::Tensor, b::Tensor)
 end
 
 function matmul(a::Tensor, b::Tensor)
+    a.visited = false
+    b.visited = false
     out = Tensor(a.data * b.data)
     out.parents = [a, b]
     out.backward = ()->begin
@@ -87,7 +98,19 @@ function matmul(a::Tensor, b::Tensor)
     return out
 end
 
+function Base.sum(t::Tensor)
+    t.visited = false
+    out = Tensor([sum(t.data)])
+    out.parents = [t]
+    out.backward = ()->begin
+        ensure_grad!(t)
+        t.grad .+= out.grad[1]
+    end
+    return out
+end
+
 function ReLU(t::Tensor)
+    t.visited = false
     out = Tensor(max.(t.data, 0))
     out.parents = [t]
     out.backward = ()->begin
@@ -98,6 +121,7 @@ function ReLU(t::Tensor)
 end
 
 function Linear(t::Tensor)
+    t.visited = false
     out = Tensor(t.data)
     out.parents = [t]
     out.backward = ()->begin
@@ -147,15 +171,6 @@ function (layer::Layer)(x::Tensor)
     return layer.activation(z)
 end
 
-struct Model
-    layers::Vector{Layer}
-    forward::Function
-end
-
-function (model::Model)(x::Tensor)
-    return model.forward(x)
-end
-
 function zeroes_init(::Type{T}, out_dim, in_dim) where T
     return zeros(T, out_dim, in_dim), zeros(T, out_dim)
 end
@@ -172,6 +187,11 @@ end
 function identity_init(::Type{T}, out_dim, in_dim) where T
     @assert out_dim == in_dim "identity_init requires square weight matrix"
     return Matrix{T}(I, out_dim, in_dim), zeros(T, out_dim)
+end
+
+function mse_loss(pred::Tensor, target::Tensor)
+    diff = pred - target
+    return sum(diff * diff) / Tensor(fill(eltype(pred.data)(length(pred.data)), (1,)))
 end
 
 
@@ -191,7 +211,31 @@ x2 = Layer(T, 5, 7, ones_init, ReLU)(x)
 x3 = Layer(T, 7, 2, ones_init, Linear)(x1) + Layer(T, 7, 2, ones_init, Linear)(x2)
 x = Layer(T, 2, 2, identity_init, ReLU)(x3)
 x = Layer(T, 2, 1, ones_init, ReLU)(x)
-
 println(x.data)
+
+y = Tensor([60.0])
+loss = mse_loss(x, y)
+println(loss.data)
+
+function backprop(t::Tensor)
+    if t.visited
+        return
+    end
+    print("Backpropagating through tensor with data: ", t.data, " and grad: ", t.grad, "\n")
+    t.visited = true
+    if t.grad === nothing
+        t.grad = ones(eltype(t.data), size(t.data))
+    end
+    if t.backward !== nothing
+        t.backward()
+    end
+    for parent in t.parents
+        backprop(parent)
+    end
+end
+
+backprop(loss)
+
+
 
 
