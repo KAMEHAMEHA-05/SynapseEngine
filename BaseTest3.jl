@@ -202,39 +202,126 @@ end
 # x3 = Layer(T, 5, 2, ones_init, ReLU)(x2)
 # x4 = Layer(T, 2, 1, ones_init, ReLU)(x3)
 
-T = Float16
-x = Tensor([1.133, -0.012184, -1.824])
-println(x.data)
-x = Layer(T, 3, 5, ones_init, ReLU)(x)
-x1 = Layer(T, 5, 7, ones_init, ReLU)(x)
-x2 = Layer(T, 5, 7, ones_init, ReLU)(x)
-x3 = Layer(T, 7, 2, ones_init, Linear)(x1) + Layer(T, 7, 2, ones_init, Linear)(x2)
-x = Layer(T, 2, 2, identity_init, ReLU)(x3)
-x = Layer(T, 2, 1, ones_init, ReLU)(x)
-println(x.data)
+# T = Float16
+# x = Tensor([1.133, -0.012184, -1.824])
+# println(x.data)
+# x = Layer(T, 3, 5, ones_init, ReLU)(x)
+# x1 = Layer(T, 5, 7, ones_init, ReLU)(x)
+# x2 = Layer(T, 5, 7, ones_init, ReLU)(x)
+# x3 = Layer(T, 7, 2, ones_init, Linear)(x1) + Layer(T, 7, 2, ones_init, Linear)(x2)
+# x = Layer(T, 2, 2, identity_init, ReLU)(x3)
+# x = Layer(T, 2, 1, ones_init, ReLU)(x)
+# println(x.data)
 
-y = Tensor([60.0])
-loss = mse_loss(x, y)
-println(loss.data)
+function build_topo(t::Tensor)
+    seen = Set{UInt}()
+    order = Tensor[]
+    function dfs(node)
+        id = objectid(node)
+        id in seen && return
+        push!(seen, id)
+        for p in node.parents
+            dfs(p)
+        end
+        push!(order, node)
+    end
+    dfs(t)
+    return order
+end
 
 function backprop(t::Tensor)
-    if t.visited
-        return
+    topo = build_topo(t)
+    for node in topo
+        node.grad = nothing
     end
-    print("Backpropagating through tensor with data: ", t.data, " and grad: ", t.grad, "\n")
-    t.visited = true
-    if t.grad === nothing
-        t.grad = ones(eltype(t.data), size(t.data))
-    end
-    if t.backward !== nothing
-        t.backward()
-    end
-    for parent in t.parents
-        backprop(parent)
+    t.grad = ones(eltype(t.data), size(t.data))
+    for node in reverse(topo)
+        ensure_grad!(node)
+        node.backward !== nothing && node.backward()
     end
 end
 
-backprop(loss)
+#backprop(loss)
+
+struct Model
+    layers::Vector{Layer}
+    forward::Function
+end
+
+T = Float32
+l1 = Layer(T, 3, 5, xavier_init, ReLU)
+l2 = Layer(T, 5, 7, xavier_init, ReLU)
+l3 = Layer(T, 5, 7, xavier_init, ReLU)
+l4 = Layer(T, 7, 2, xavier_init, Linear)
+l5 = Layer(T, 7, 2, xavier_init, Linear)
+l6 = Layer(T, 2, 2, identity_init, ReLU)
+l7 = Layer(T, 2, 1, xavier_init, Linear)
+
+model = Model(
+    [l1, l2, l3, l4, l5, l6, l7],
+    function(x::Tensor)
+        x = l1(x)
+        x1 = l2(x)
+        x2 = l3(x)
+        x3 = l4(x1) + l5(x2)
+        x = l6(x3)
+        return l7(x)
+    end
+)
+
+function (model::Model)(x::Tensor)
+    return model.forward(x)
+end
+
+x = model(Tensor([1.133, -0.012184, -1.824]))
+println("Model output: ", x.data)
+
+y = Tensor([60.0])
+loss = mse_loss(x, y)
+println("MSE Loss: ", loss.data)
+
+function clip_grad!(layer::Layer, max_norm::Real)
+    for param in [layer.w, layer.b]
+        if param.grad !== nothing
+            norm = sqrt(sum(param.grad .^ 2))
+            if norm > max_norm
+                param.grad .*= max_norm / norm
+            end
+        end
+    end
+end
+
+function train!(model::Model, x::Tensor, y::Tensor, lr::Real, loss_fn::F = mse_loss) where F
+    pred = model(x)
+    loss = loss_fn(pred, y)
+    backprop(loss)
+    for layer in model.layers
+        clip_grad!(layer, 1.0)
+        if layer.trainable
+            layer.w.data .-= lr .* layer.w.grad
+            layer.b.data .-= lr .* layer.b.grad
+        end
+    end
+    return loss.data[1]
+end
+
+function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn::F = mse_loss) where F
+    for epoch in 1:epochs
+        l = train!(model, x, y, lr, loss_fn)
+        if(l<1.00e-6 || loss===NaN)
+            println("Early stopping at epoch $epoch: Loss = $l")
+            break
+        end
+        println("Epoch $epoch: Loss = $l")
+    end
+end
+
+fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.01, mse_loss)
+
+
+
+println(model(Tensor([1.133, -0.012184, -1.824])))
+
 
 
 
