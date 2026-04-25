@@ -11,7 +11,7 @@ println("  SynapseEngine — Wall Time & Memory Benchmark")
 println("="^64)
 
 # ── helpers ──────────────────────────────────────────────────
-function bench(f; warmup=5, runs=50)
+function bench(f; warmup=50, runs=50)
     for _ in 1:warmup; f(); end
     stats = [@timed(f()) for _ in 1:runs]
     times  = [s.time   for s in stats]

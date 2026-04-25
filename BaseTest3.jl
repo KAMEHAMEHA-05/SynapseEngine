@@ -5,11 +5,13 @@ import Base: +, *, /, -, size, reshape
 using Random  # For randn and rand
 using LinearAlgebra 
 
+abstract type BackwardOp end
+
 mutable struct Tensor{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
     data::A
     grad::Union{Nothing, A}
     parents::Vector{Tensor}
-    backward::Union{Nothing, Function}
+    backward::Union{Nothing, BackwardOp}
     visited::Bool
 end
 
@@ -19,25 +21,37 @@ Base.setindex!(t::Tensor, v, I...) = (t.data[I...] = v)
 Base.IndexStyle(::Type{<:Tensor}) = IndexStyle(Array)
 
 Tensor(data::AbstractArray{T,N}) where {T,N} =
-    Tensor{T,N,typeof(data)}(data, nothing, [], ()->nothing, false)
+    Tensor{T,N,typeof(data)}(data, nothing, [], nothing, false)
 
 function ensure_grad!(t::Tensor)
     if t.grad === nothing
-        t.grad = zeros(eltype(t.data), size(t.data))
+        t.grad = similar(t.data)   
+        fill!(t.grad, 0)           
     end
 end
+struct AddBackward     <: BackwardOp; a::Tensor; b::Tensor; end
+struct SubBackward     <: BackwardOp; a::Tensor; b::Tensor; end
+struct MulBackward     <: BackwardOp; a::Tensor; b::Tensor; end
+struct DivBackward     <: BackwardOp; a::Tensor; b::Tensor; end
+struct MatMulBackward  <: BackwardOp; a::Tensor; b::Tensor; end
+struct SumBackward     <: BackwardOp; t::Tensor;            end
+struct ReLUBackward    <: BackwardOp; t::Tensor;            end
+struct LeakyReLUBackward <: BackwardOp; t::Tensor; alpha::Float32; end
+struct LinearBackward  <: BackwardOp; t::Tensor;            end
+
 
 function Base.:+(a::Tensor, b::Tensor)
     a.visited = false
     b.visited = false
     out = Tensor(a.data + b.data)
     out.parents = [a, b]
-    out.backward = ()->begin
-        ensure_grad!(a)
-        ensure_grad!(b)
-        a.grad .+= out.grad
-        b.grad .+= out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(a)
+    #     ensure_grad!(b)
+    #     a.grad .+= out.grad
+    #     b.grad .+= out.grad
+    # end
+    out.backward = AddBackward(a, b)
     return out
 end
 
@@ -47,12 +61,13 @@ function Base.:-(a::Tensor, b::Tensor)
     b.visited = false
     out = Tensor(a.data .- b.data)
     out.parents = [a, b]
-    out.backward = ()->begin
-        ensure_grad!(a)
-        ensure_grad!(b)
-        a.grad .+= out.grad
-        b.grad .-= out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(a)
+    #     ensure_grad!(b)
+    #     a.grad .+= out.grad
+    #     b.grad .-= out.grad
+    # end
+    out.backward = SubBackward(a, b)
     return out
 end
 
@@ -61,12 +76,13 @@ function Base.:*(a::Tensor, b::Tensor)
     b.visited = false
     out = Tensor(a.data .* b.data)
     out.parents = [a, b]
-    out.backward = ()->begin
-        ensure_grad!(a)
-        ensure_grad!(b)
-        a.grad .+= b.data .* out.grad
-        b.grad .+= a.data .* out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(a)
+    #     ensure_grad!(b)
+    #     a.grad .+= b.data .* out.grad
+    #     b.grad .+= a.data .* out.grad
+    # end
+    out.backward = MulBackward(a, b)
     return out
 end
 
@@ -75,12 +91,13 @@ function Base.:/(a::Tensor, b::Tensor)
     b.visited = false
     out = Tensor(a.data ./ b.data)
     out.parents = [a, b]
-    out.backward = ()->begin
-        ensure_grad!(a)
-        ensure_grad!(b)
-        a.grad .+= (1 ./ b.data) .* out.grad
-        b.grad .-= (a.data ./ (b.data .^ 2)) .* out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(a)
+    #     ensure_grad!(b)
+    #     a.grad .+= (1 ./ b.data) .* out.grad
+    #     b.grad .-= (a.data ./ (b.data .^ 2)) .* out.grad
+    # end
+    out.backward = DivBackward(a, b)
     return out
 end
 
@@ -89,12 +106,13 @@ function matmul(a::Tensor, b::Tensor)
     b.visited = false
     out = Tensor(a.data * b.data)
     out.parents = [a, b]
-    out.backward = ()->begin
-        ensure_grad!(a)
-        ensure_grad!(b)
-        a.grad .+= out.grad * b.data'
-        b.grad .+= a.data' * out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(a)
+    #     ensure_grad!(b)
+    #     a.grad .+= out.grad * b.data'
+    #     b.grad .+= a.data' * out.grad
+    # end
+    out.backward = MatMulBackward(a, b)
     return out
 end
 
@@ -102,10 +120,11 @@ function Base.sum(t::Tensor)
     t.visited = false
     out = Tensor([sum(t.data)])
     out.parents = [t]
-    out.backward = ()->begin
-        ensure_grad!(t)
-        t.grad .+= out.grad[1]
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(t)
+    #     t.grad .+= out.grad[1]
+    # end
+    out.backward = SumBackward(t)
     return out
 end
 
@@ -113,10 +132,11 @@ function ReLU(t::Tensor)
     t.visited = false
     out = Tensor(max.(t.data, 0))
     out.parents = [t]
-    out.backward = ()->begin
-        ensure_grad!(t)
-        t.grad .+= (t.data .> 0) .* out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(t)
+    #     t.grad .+= (t.data .> 0) .* out.grad
+    # end
+    out.backward = ReLUBackward(t)
     return out
 end
 
@@ -124,10 +144,11 @@ function LeakyReLU(t::Tensor, alpha=0.01)
     t.visited = false
     out = Tensor(max.(t.data, alpha .* t.data))
     out.parents = [t]
-    out.backward = ()->begin
-        ensure_grad!(t)
-        t.grad .+= ((t.data .> 0) .+ alpha .* (t.data .<= 0)) .* out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(t)
+    #     t.grad .+= ((t.data .> 0) .+ alpha .* (t.data .<= 0)) .* out.grad
+    # end
+    out.backward = LeakyReLUBackward(t, alpha)
     return out
 end
 
@@ -135,12 +156,64 @@ function Linear(t::Tensor)
     t.visited = false
     out = Tensor(t.data)
     out.parents = [t]
-    out.backward = ()->begin
-        ensure_grad!(t)
-        t.grad .+= 1* out.grad
-    end
+    # out.backward = ()->begin
+    #     ensure_grad!(t)
+    #     t.grad .+= 1* out.grad
+    # end
+    out.backward = LinearBackward(t)
     return out
 end
+
+function backward!(op::AddBackward, grad)
+    ensure_grad!(op.a); ensure_grad!(op.b)
+    op.a.grad .+= grad
+    op.b.grad .+= grad
+end
+
+function backward!(op::SubBackward, grad)
+    ensure_grad!(op.a); ensure_grad!(op.b)
+    op.a.grad .+= grad
+    op.b.grad .-= grad
+end
+
+function backward!(op::MulBackward, grad)
+    ensure_grad!(op.a); ensure_grad!(op.b)
+    op.a.grad .+= op.b.data .* grad
+    op.b.grad .+= op.a.data .* grad
+end
+
+function backward!(op::DivBackward, grad)
+    ensure_grad!(op.a); ensure_grad!(op.b)
+    op.a.grad .+= (1 ./ op.b.data) .* grad
+    op.b.grad .-= (op.a.data ./ (op.b.data .^ 2)) .* grad
+end
+
+function backward!(op::MatMulBackward, grad)
+    ensure_grad!(op.a); ensure_grad!(op.b)
+    op.a.grad .+= grad * op.b.data'
+    op.b.grad .+= op.a.data' * grad
+end
+
+function backward!(op::SumBackward, grad)
+    ensure_grad!(op.t)
+    op.t.grad .+= grad[1]
+end
+
+function backward!(op::ReLUBackward, grad)
+    ensure_grad!(op.t)
+    op.t.grad .+= (op.t.data .> 0) .* grad
+end
+
+function backward!(op::LeakyReLUBackward, grad)
+    ensure_grad!(op.t)
+    op.t.grad .+= ((op.t.data .> 0) .+ op.alpha .* (op.t.data .<= 0)) .* grad
+end
+
+function backward!(op::LinearBackward, grad)
+    ensure_grad!(op.t)
+    op.t.grad .+= grad
+end
+
 
 struct Node{T,N,A<:AbstractArray{T,N}, F}
     w::Tensor{T,N,A}
@@ -243,12 +316,17 @@ end
 function backprop(t::Tensor)
     topo = build_topo(t)
     for node in topo
-        node.grad = nothing
+        if node.grad !== nothing
+            fill!(node.grad, 0)   
+        else
+            ensure_grad!(node)    
+        end
     end
-    t.grad = ones(eltype(t.data), size(t.data))
+    fill!(t.grad, 1)              
     for node in reverse(topo)
-        ensure_grad!(node)
-        node.backward !== nothing && node.backward()
+        if node.backward !== nothing
+            backward!(node.backward, node.grad)
+        end
     end
 end
 
@@ -340,7 +418,7 @@ function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn
             println("Early stopping at epoch $epoch: Loss = $l")
             break
         end
-        println("Epoch $epoch: Loss = $l")
+        # println("Epoch $epoch: Loss = $l")
     end
 end
 
