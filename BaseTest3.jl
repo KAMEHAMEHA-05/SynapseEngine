@@ -262,24 +262,34 @@ end
 using Random
 Random.seed!(48)
 
+# T = Float32
+# l1 = Layer(T, 3, 5, xavier_init, LeakyReLU)
+# l2 = Layer(T, 5, 7, xavier_init, LeakyReLU)
+# l3 = Layer(T, 5, 7, xavier_init, LeakyReLU)
+# l4 = Layer(T, 7, 2, xavier_init, Linear)
+# l5 = Layer(T, 7, 2, xavier_init, Linear)
+# l6 = Layer(T, 7, 2, xavier_init, LeakyReLU)
+# l7 = Layer(T, 2, 1, xavier_init, Linear)
+
+# model = Model(
+#     [l1, l2, l3, l4, l5, l6, l7],
+#     function(x::Tensor)
+#         x = l1(x)
+#         x1 = l2(x)
+#         x2 = l3(x)
+#         # x3 = l4(x1) + l5(x2)
+#         x = l6(x2)
+#         return l7(x)
+#     end
+# )
+
 T = Float32
-l1 = Layer(T, 3, 5, xavier_init, LeakyReLU)
-l2 = Layer(T, 5, 7, xavier_init, LeakyReLU)
-l3 = Layer(T, 5, 7, xavier_init, LeakyReLU)
-l4 = Layer(T, 7, 2, xavier_init, Linear)
-l5 = Layer(T, 7, 2, xavier_init, Linear)
-l6 = Layer(T, 7, 2, xavier_init, LeakyReLU)
-l7 = Layer(T, 2, 1, xavier_init, Linear)
+l1 = Layer(T, 1, 1, xavier_init, LeakyReLU)
 
 model = Model(
-    [l1, l2, l3, l4, l5, l6, l7],
+    [l1],
     function(x::Tensor)
-        x = l1(x)
-        x1 = l2(x)
-        x2 = l3(x)
-        # x3 = l4(x1) + l5(x2)
-        x = l6(x2)
-        return l7(x)
+        return l1(x)
     end
 )
 
@@ -287,12 +297,12 @@ function (model::Model)(x::Tensor)
     return model.forward(x)
 end
 
-x = model(Tensor([1.133, -0.012184, -1.824]))
-println("Model output: ", x.data)
+# x = model(Tensor([1.133, -0.012184, -1.824]))
+# println("Model output: ", x.data)
 
-y = Tensor([60.0])
-loss = mse_loss(x, y)
-println("MSE Loss: ", loss.data)
+# y = Tensor([60.0])
+# loss = mse_loss(x, y)
+# println("MSE Loss: ", loss.data)
 
 function clip_grad!(layer::Layer, max_norm::Real)
     for param in [layer.w, layer.b]
@@ -326,7 +336,7 @@ end
 function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn::F = mse_loss) where F
     for epoch in 1:epochs
         l = train!(model, x, y, lr, loss_fn)
-        if(l<1.00e-6 || loss===NaN)
+        if(l<1.00e-6 || l===NaN)
             println("Early stopping at epoch $epoch: Loss = $l")
             break
         end
@@ -334,11 +344,13 @@ function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn
     end
 end
 
-fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.03, mse_loss)
+# fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.019, mse_loss)
+fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), 1000, 0.1, mse_loss)
 
 
 
-println(model(Tensor([1.133, -0.012184, -1.824])))
+# println(model(Tensor([1.133, -0.012184, -1.824])))
+println(model(Tensor([1.133])))
 
 
 
