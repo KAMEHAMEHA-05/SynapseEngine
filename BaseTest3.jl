@@ -6,6 +6,7 @@ using Random  # For randn and rand
 using LinearAlgebra 
 
 abstract type BackwardOp end
+const OpCacheKey = Tuple{UInt, UInt, DataType}
 
 mutable struct Tensor{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
     data::A
@@ -40,126 +41,128 @@ struct LeakyReLUBackward <: BackwardOp; t::Tensor; alpha::Float32; end
 struct LinearBackward  <: BackwardOp; t::Tensor;            end
 
 
-function Base.:+(a::Tensor, b::Tensor)
-    a.visited = false
-    b.visited = false
-    out = Tensor(a.data + b.data)
-    out.parents = [a, b]
-    # out.backward = ()->begin
-    #     ensure_grad!(a)
-    #     ensure_grad!(b)
-    #     a.grad .+= out.grad
-    #     b.grad .+= out.grad
-    # end
-    out.backward = AddBackward(a, b)
-    return out
-end
-
-
-function Base.:-(a::Tensor, b::Tensor)
-    a.visited = false
-    b.visited = false
-    out = Tensor(a.data .- b.data)
-    out.parents = [a, b]
-    # out.backward = ()->begin
-    #     ensure_grad!(a)
-    #     ensure_grad!(b)
-    #     a.grad .+= out.grad
-    #     b.grad .-= out.grad
-    # end
-    out.backward = SubBackward(a, b)
-    return out
-end
-
-function Base.:*(a::Tensor, b::Tensor)
-    a.visited = false
-    b.visited = false
-    out = Tensor(a.data .* b.data)
-    out.parents = [a, b]
-    # out.backward = ()->begin
-    #     ensure_grad!(a)
-    #     ensure_grad!(b)
-    #     a.grad .+= b.data .* out.grad
-    #     b.grad .+= a.data .* out.grad
-    # end
-    out.backward = MulBackward(a, b)
-    return out
-end
-
-function Base.:/(a::Tensor, b::Tensor)
-    a.visited = false
-    b.visited = false
-    out = Tensor(a.data ./ b.data)
-    out.parents = [a, b]
-    # out.backward = ()->begin
-    #     ensure_grad!(a)
-    #     ensure_grad!(b)
-    #     a.grad .+= (1 ./ b.data) .* out.grad
-    #     b.grad .-= (a.data ./ (b.data .^ 2)) .* out.grad
-    # end
-    out.backward = DivBackward(a, b)
-    return out
-end
-
-function matmul(a::Tensor, b::Tensor)
-    a.visited = false
-    b.visited = false
-    out = Tensor(a.data * b.data)
-    out.parents = [a, b]
-    # out.backward = ()->begin
-    #     ensure_grad!(a)
-    #     ensure_grad!(b)
-    #     a.grad .+= out.grad * b.data'
-    #     b.grad .+= a.data' * out.grad
-    # end
+function matmul(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(a), objectid(b), MatMulBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        mul!(out.data, a.data, b.data)
+    else
+        out = Tensor(a.data * b.data)
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [a, b]
     out.backward = MatMulBackward(a, b)
     return out
 end
 
-function Base.sum(t::Tensor)
-    t.visited = false
-    out = Tensor([sum(t.data)])
-    out.parents = [t]
-    # out.backward = ()->begin
-    #     ensure_grad!(t)
-    #     t.grad .+= out.grad[1]
-    # end
+function Base.:+(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(a), objectid(b), AddBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= a.data .+ b.data
+    else
+        out = Tensor(a.data .+ b.data)
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [a, b]
+    out.backward = AddBackward(a, b)
+    return out
+end
+
+function Base.:-(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(a), objectid(b), SubBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= a.data .- b.data
+    else
+        out = Tensor(a.data .- b.data)
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [a, b]
+    out.backward = SubBackward(a, b)
+    return out
+end
+
+function Base.:*(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(a), objectid(b), MulBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= a.data .* b.data
+    else
+        out = Tensor(a.data .* b.data)
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [a, b]
+    out.backward = MulBackward(a, b)
+    return out
+end
+
+function Base.:/(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(a), objectid(b), DivBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= a.data ./ b.data
+    else
+        out = Tensor(a.data ./ b.data)
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [a, b]
+    out.backward = DivBackward(a, b)
+    return out
+end
+
+function Base.sum(t::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(t), objectid(t), SumBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= [sum(t.data)]
+    else
+        out = Tensor([sum(t.data)])
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [t]
     out.backward = SumBackward(t)
     return out
 end
 
-function ReLU(t::Tensor)
-    t.visited = false
-    out = Tensor(max.(t.data, 0))
-    out.parents = [t]
-    # out.backward = ()->begin
-    #     ensure_grad!(t)
-    #     t.grad .+= (t.data .> 0) .* out.grad
-    # end
+function ReLU(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(t), objectid(t), ReLUBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= max.(t.data, 0)
+    else
+        out = Tensor(max.(t.data, 0))
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [t]
     out.backward = ReLUBackward(t)
     return out
 end
 
-function LeakyReLU(t::Tensor, alpha=0.01)
-    t.visited = false
-    out = Tensor(max.(t.data, alpha .* t.data))
-    out.parents = [t]
-    # out.backward = ()->begin
-    #     ensure_grad!(t)
-    #     t.grad .+= ((t.data .> 0) .+ alpha .* (t.data .<= 0)) .* out.grad
-    # end
+function LeakyReLU(t::Tensor, alpha::Float32=0.01f0; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(t), objectid(t), LeakyReLUBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= max.(t.data, alpha .* t.data)
+    else
+        out = Tensor(max.(t.data, alpha .* t.data))
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [t]
     out.backward = LeakyReLUBackward(t, alpha)
     return out
 end
 
-function Linear(t::Tensor)
-    t.visited = false
-    out = Tensor(t.data)
-    out.parents = [t]
-    # out.backward = ()->begin
-    #     ensure_grad!(t)
-    #     t.grad .+= 1* out.grad
-    # end
+function Linear(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    key = (objectid(t), objectid(t), LinearBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= t.data
+    else
+        out = Tensor(copy(t.data))
+        cache !== nothing && (cache[key] = out)
+    end
+    out.parents  = [t]
     out.backward = LinearBackward(t)
     return out
 end
@@ -231,6 +234,7 @@ mutable struct Layer{Tw, Tb, F}
     b::Tb
     activation::F
     trainable::Bool
+    _cache::Union{Nothing, Dict{OpCacheKey, Tensor}}
     # next::Vector{Layer}
     # prev::Vector{Layer}
     # output::Tensor
@@ -238,21 +242,27 @@ mutable struct Layer{Tw, Tb, F}
 end
 
 function Layer(w::AbstractArray{T,2}, b::AbstractArray{T,1}, activation::F; trainable=true) where {T,F}
-    return Layer(
-        Tensor(w),
-        Tensor(b),
-        activation,
-        trainable
-    )
+    w_tensor = Tensor(w)
+    b_tensor = Tensor(b)
+    w_tensor.grad = similar(w); fill!(w_tensor.grad, 0)
+    b_tensor.grad = similar(b); fill!(b_tensor.grad, 0)
+    return Layer(w_tensor, b_tensor, activation, trainable, nothing)
 end
+
 function Layer(::Type{T}, in_dim::Int, out_dim::Int, init::Function, activation::F; trainable=true) where {T,F}
     W, b = init(T, out_dim, in_dim)
-    return Layer(Tensor(W), Tensor(b), activation, trainable)
+    w_tensor = Tensor(W)
+    b_tensor = Tensor(b)
+    w_tensor.grad = similar(W); fill!(w_tensor.grad, 0)
+    b_tensor.grad = similar(b); fill!(b_tensor.grad, 0)
+    return Layer(w_tensor, b_tensor, activation, trainable, nothing)
 end
 
 function (layer::Layer)(x::Tensor)
-    z = matmul(layer.w, x) + layer.b
-    return layer.activation(z)
+    c  = layer._cache
+    mm = matmul(layer.w, x, c)
+    z  = Base.:+(mm, layer.b, c)
+    return layer.activation(z; cache=c)  
 end
 
 function zeroes_init(::Type{T}, out_dim, in_dim) where T
@@ -273,11 +283,69 @@ function identity_init(::Type{T}, out_dim, in_dim) where T
     return Matrix{T}(I, out_dim, in_dim), zeros(T, out_dim)
 end
 
-function mse_loss(pred::Tensor, target::Tensor)
-    diff = pred - target
-    return sum(diff * diff) / Tensor(fill(eltype(pred.data)(length(pred.data)), (1,)))
+function mse_loss(pred::Tensor, target::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+    diff = Base.:-(pred, target, cache)
+    sq   = Base.:*(diff, diff, cache)
+    n    = Tensor(fill(eltype(pred.data)(length(pred.data)), (1,)))
+    key_n = (objectid(pred), UInt(0), DivBackward)
+    if cache !== nothing
+        if haskey(cache, key_n)
+            n = cache[key_n]
+            fill!(n.data, eltype(pred.data)(length(pred.data)))
+        else
+            cache[key_n] = n
+        end
+    end
+    return Base.:/(sum(sq, cache), n, cache)
 end
 
+
+mutable struct Model
+    layers::Vector{Layer}
+    forward::Function
+    _topo_caches::Dict{UInt, Vector{Tensor}}
+    _param_ids::Set{UInt}
+    _input::Union{Nothing, Tensor}
+end
+
+function Model(layers::Vector, forward::Function)
+    param_ids = Set{UInt}()
+    shared_cache = Dict{OpCacheKey, Tensor}()   
+    for layer in layers
+        push!(param_ids, objectid(layer.w))
+        push!(param_ids, objectid(layer.b))
+        layer._cache = shared_cache              
+    end
+    return Model(layers, forward, Dict{UInt, Vector{Tensor}}(), param_ids, nothing)
+end
+
+function (model::Model)(x::AbstractArray)
+    if model._input === nothing
+        model._input = Tensor(copy(x))
+        model._input.grad = similar(model._input.data)
+        fill!(model._input.grad, 0)
+    elseif size(x) != size(model._input.data)
+        for layer in model.layers
+            empty!(layer._cache)
+        end
+        model._input = Tensor(copy(x))
+        model._input.grad = similar(model._input.data)
+        fill!(model._input.grad, 0)
+    else
+        model._input.data .= x
+        fill!(model._input.grad, 0)
+    end
+    return model.forward(model._input)
+end
+
+function (model::Model)(x::Tensor)
+    model(x.data)
+end
+
+function get_cache(model::Model)
+    isempty(model.layers) && return nothing
+    return model.layers[1]._cache
+end
 
 # T = Float16
 # x1 = Tensor(randn(T, 3))
@@ -313,17 +381,40 @@ function build_topo(t::Tensor)
     return order
 end
 
-function backprop(t::Tensor)
-    topo = build_topo(t)
+function graph_signature(topo::Vector{Tensor}, param_ids::Set{UInt})
+    h = UInt(0)
     for node in topo
-        if node.grad !== nothing
-            fill!(node.grad, 0)   
-        else
-            ensure_grad!(node)    
+        if objectid(node) in param_ids
+            h = hash(objectid(node), h)
         end
     end
-    fill!(t.grad, 1)              
+    return h
+end
+
+function backprop!(model::Model, loss::Tensor)
+    topo = build_topo(loss)
+    sig  = graph_signature(topo, model._param_ids)
+
+    if !haskey(model._topo_caches, sig)
+        model._topo_caches[sig] = topo
+    end
+
+    for node in topo
+        if node.grad !== nothing
+            fill!(node.grad, 0)
+        end
+    end
+
+    if loss.grad === nothing
+        loss.grad = ones(eltype(loss.data), size(loss.data))
+    else
+        fill!(loss.grad, 1)
+    end
+
     for node in reverse(topo)
+        if node.grad === nothing
+            ensure_grad!(node)
+        end
         if node.backward !== nothing
             backward!(node.backward, node.grad)
         end
@@ -331,12 +422,6 @@ function backprop(t::Tensor)
 end
 
 #backprop(loss)
-
-struct Model
-    layers::Vector{Layer}
-    forward::Function
-end
-
 using Random
 Random.seed!(48)
 
@@ -371,10 +456,6 @@ model = Model(
     end
 )
 
-function (model::Model)(x::Tensor)
-    return model.forward(x)
-end
-
 # x = model(Tensor([1.133, -0.012184, -1.824]))
 # println("Model output: ", x.data)
 
@@ -395,8 +476,8 @@ end
 
 function train!(model::Model, x::Tensor, y::Tensor, lr::Real, loss_fn::F = mse_loss) where F
     pred = model(x)
-    loss = loss_fn(pred, y)
-    backprop(loss)
+    loss = loss_fn(pred, y, get_cache(model))
+    backprop!(model, loss)
     for layer in model.layers
         clip_grad!(layer, 1.0)  # Clip gradients to prevent exploding gradients
         if layer.trainable
@@ -430,6 +511,28 @@ fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), 1000, 0.1, mse_loss)
 # println(model(Tensor([1.133, -0.012184, -1.824])))
 println(model(Tensor([1.133])))
 
+
+function backprop(loss::Tensor)
+    topo = build_topo(loss)
+    for node in topo
+        if node.grad !== nothing
+            fill!(node.grad, 0)
+        end
+    end
+    if loss.grad === nothing
+        loss.grad = ones(eltype(loss.data), size(loss.data))
+    else
+        fill!(loss.grad, 1)
+    end
+    for node in reverse(topo)
+        if node.grad === nothing
+            ensure_grad!(node)
+        end
+        if node.backward !== nothing
+            backward!(node.backward, node.grad)
+        end
+    end
+end
 
 
 
