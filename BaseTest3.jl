@@ -13,7 +13,6 @@ mutable struct Tensor{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
     grad::Union{Nothing, A}
     parents::Vector{Tensor}
     backward::Union{Nothing, BackwardOp}
-    visited::Bool
 end
 
 Base.size(t::Tensor) = size(t.data)
@@ -22,7 +21,7 @@ Base.setindex!(t::Tensor, v, I...) = (t.data[I...] = v)
 Base.IndexStyle(::Type{<:Tensor}) = IndexStyle(Array)
 
 Tensor(data::AbstractArray{T,N}) where {T,N} =
-    Tensor{T,N,typeof(data)}(data, nothing, [], nothing, false)
+    Tensor{T,N,typeof(data)}(data, nothing, [], nothing)
 
 function ensure_grad!(t::Tensor)
     if t.grad === nothing
@@ -49,9 +48,9 @@ function matmul(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Ten
     else
         out = Tensor(a.data * b.data)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [a, b]
+        out.backward = MatMulBackward(a, b)
     end
-    out.parents  = [a, b]
-    out.backward = MatMulBackward(a, b)
     return out
 end
 
@@ -63,9 +62,10 @@ function Base.:+(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Te
     else
         out = Tensor(a.data .+ b.data)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [a, b]
+        out.backward = AddBackward(a, b)
     end
-    out.parents  = [a, b]
-    out.backward = AddBackward(a, b)
+    
     return out
 end
 
@@ -77,9 +77,9 @@ function Base.:-(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Te
     else
         out = Tensor(a.data .- b.data)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [a, b]
+        out.backward = SubBackward(a, b)
     end
-    out.parents  = [a, b]
-    out.backward = SubBackward(a, b)
     return out
 end
 
@@ -91,9 +91,9 @@ function Base.:*(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Te
     else
         out = Tensor(a.data .* b.data)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [a, b]
+        out.backward = MulBackward(a, b)
     end
-    out.parents  = [a, b]
-    out.backward = MulBackward(a, b)
     return out
 end
 
@@ -105,9 +105,9 @@ function Base.:/(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Te
     else
         out = Tensor(a.data ./ b.data)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [a, b]
+        out.backward = DivBackward(a, b)
     end
-    out.parents  = [a, b]
-    out.backward = DivBackward(a, b)
     return out
 end
 
@@ -119,9 +119,9 @@ function Base.sum(t::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=not
     else
         out = Tensor([sum(t.data)])
         cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = SumBackward(t)
     end
-    out.parents  = [t]
-    out.backward = SumBackward(t)
     return out
 end
 
@@ -133,9 +133,9 @@ function ReLU(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing
     else
         out = Tensor(max.(t.data, 0))
         cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = ReLUBackward(t)
     end
-    out.parents  = [t]
-    out.backward = ReLUBackward(t)
     return out
 end
 
@@ -147,9 +147,9 @@ function LeakyReLU(t::Tensor, alpha::Float32=0.01f0; cache::Union{Nothing, Dict{
     else
         out = Tensor(max.(t.data, alpha .* t.data))
         cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = LeakyReLUBackward(t, alpha)
     end
-    out.parents  = [t]
-    out.backward = LeakyReLUBackward(t, alpha)
     return out
 end
 
@@ -161,9 +161,9 @@ function Linear(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothi
     else
         out = Tensor(copy(t.data))
         cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = LinearBackward(t)
     end
-    out.parents  = [t]
-    out.backward = LinearBackward(t)
     return out
 end
 
@@ -218,27 +218,12 @@ function backward!(op::LinearBackward, grad)
 end
 
 
-struct Node{T,N,A<:AbstractArray{T,N}, F}
-    w::Tensor{T,N,A}
-    b::Tensor{T,N,A}
-    activation::F
-end
-
-function (node::Node)(x::Tensor)
-    z = matmul(node.w, x) .+ node.b
-    return node.activation(z)
-end
-
 mutable struct Layer{Tw, Tb, F}
     w::Tw
     b::Tb
     activation::F
     trainable::Bool
     _cache::Union{Nothing, Dict{OpCacheKey, Tensor}}
-    # next::Vector{Layer}
-    # prev::Vector{Layer}
-    # output::Tensor
-    # ready::Int
 end
 
 function Layer(w::AbstractArray{T,2}, b::AbstractArray{T,1}, activation::F; trainable=true) where {T,F}
@@ -306,6 +291,8 @@ mutable struct Model
     _topo_caches::Dict{UInt, Vector{Tensor}}
     _param_ids::Set{UInt}
     _input::Union{Nothing, Tensor}
+    _stable_topo::Union{Nothing, Vector{Tensor}}   
+    _last_sig::Union{Nothing, UInt}
 end
 
 function Model(layers::Vector, forward::Function)
@@ -316,7 +303,7 @@ function Model(layers::Vector, forward::Function)
         push!(param_ids, objectid(layer.b))
         layer._cache = shared_cache              
     end
-    return Model(layers, forward, Dict{UInt, Vector{Tensor}}(), param_ids, nothing)
+    return Model(layers, forward, Dict{UInt, Vector{Tensor}}(), param_ids, nothing, nothing, nothing)
 end
 
 function (model::Model)(x::AbstractArray)
@@ -365,6 +352,21 @@ end
 # x = Layer(T, 2, 1, ones_init, ReLU)(x)
 # println(x.data)
 
+function graph_changed(model::Model, loss::Tensor)
+    isempty(model._topo_caches) && return true   
+    sig = quick_sig(loss, model._param_ids)
+    return !haskey(model._topo_caches, sig)
+end
+
+
+function quick_sig(loss::Tensor, param_ids::Set{UInt})
+    h = UInt(0)
+    for p in loss.parents
+        h = hash(objectid(p), h)
+    end
+    return h
+end
+
 function build_topo(t::Tensor)
     seen = Set{UInt}()
     order = Tensor[]
@@ -392,32 +394,34 @@ function graph_signature(topo::Vector{Tensor}, param_ids::Set{UInt})
 end
 
 function backprop!(model::Model, loss::Tensor)
-    topo = build_topo(loss)
-    sig  = graph_signature(topo, model._param_ids)
-
-    if !haskey(model._topo_caches, sig)
+    if model._stable_topo === nothing
+        topo = build_topo(loss)
+        sig  = graph_signature(topo, model._param_ids)
         model._topo_caches[sig] = topo
-    end
-
-    for node in topo
-        if node.grad !== nothing
-            fill!(node.grad, 0)
-        end
-    end
-
-    if loss.grad === nothing
-        loss.grad = ones(eltype(loss.data), size(loss.data))
+        model._stable_topo      = topo
+        model._last_sig         = sig
     else
-        fill!(loss.grad, 1)
+        sig = UInt(0)
+        for p in loss.parents
+            sig = hash(objectid(p), sig)
+        end
+        if sig != model._last_sig
+            topo = build_topo(loss)
+            new_sig = graph_signature(topo, model._param_ids)
+            model._topo_caches[new_sig] = topo
+            model._stable_topo          = topo
+            model._last_sig             = sig
+        end
     end
 
+    topo = model._stable_topo
+    for node in topo
+        node.grad !== nothing && fill!(node.grad, 0)
+    end
+    loss.grad === nothing ? (loss.grad = ones(eltype(loss.data), size(loss.data))) : fill!(loss.grad, 1)
     for node in reverse(topo)
-        if node.grad === nothing
-            ensure_grad!(node)
-        end
-        if node.backward !== nothing
-            backward!(node.backward, node.grad)
-        end
+        node.grad === nothing && ensure_grad!(node)
+        node.backward !== nothing && backward!(node.backward, node.grad)
     end
 end
 
