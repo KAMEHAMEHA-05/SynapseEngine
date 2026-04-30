@@ -143,7 +143,6 @@ end
 function reduce_sum(t::Tensor, dims; keepdims=false, cache=nothing)
     key = (objectid(t), UInt(hash((dims, keepdims))), SumBackward)
 
-    # compute the reduction
     result = sum(t.data, dims=dims)
     if !keepdims
         result = dropdims(result, dims=dims)
@@ -206,6 +205,30 @@ function Linear(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothi
     return out
 end
 
+function softmax(t::Tensor, dims::Int=1; cache=nothing)
+    key = (objectid(t), UInt(dims), SoftmaxBackward)
+    x   = t.data .- maximum(t.data, dims=dims)
+    ex  = exp.(x)
+    result = ex ./ sum(ex, dims=dims)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= result
+    else
+        out = Tensor(result)
+        cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = SoftmaxBackward(t, out, dims)
+    end
+    return out
+end
+
+function backward!(op::SoftmaxBackward, grad)
+    ensure_grad!(op.t)
+    s   = op.out.data
+    dot = sum(grad .* s, dims=op.dims)
+    op.t.grad .+= s .* (grad .- dot)
+end
+
 function backward!(op::AddBackward, grad)
     ensure_grad!(op.a); ensure_grad!(op.b)
     op.a.grad .+= grad
@@ -247,6 +270,11 @@ function backward!(op::SumBackward, grad)
         )
         op.t.grad .+= reshape(op.keepdims ? grad : reshape(grad, g_shape), g_shape)
     end
+end
+
+function backward!(op::ScalarDivBackward, grad)
+    ensure_grad!(op.t)
+    op.t.grad .+= grad[1] / op.n
 end
 
 function backward!(op::ReLUBackward, grad)
@@ -315,20 +343,22 @@ function identity_init(::Type{T}, out_dim, in_dim) where T
     return Matrix{T}(I, out_dim, in_dim), zeros(T, out_dim)
 end
 
-function mse_loss(pred::Tensor, target::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
+function mse_loss(pred::Tensor, target::Tensor, cache=nothing)
     diff = Base.:-(pred, target, cache)
     sq   = Base.:*(diff, diff, cache)
-    n    = Tensor(fill(eltype(pred.data)(length(pred.data)), (1,)))
-    key_n = (objectid(pred), UInt(0), DivBackward)
-    if cache !== nothing
-        if haskey(cache, key_n)
-            n = cache[key_n]
-            fill!(n.data, eltype(pred.data)(length(pred.data)))
-        else
-            cache[key_n] = n
-        end
+    s    = Base.sum(sq, cache)
+    n    = eltype(pred.data)(length(pred.data))
+    key  = (objectid(s), UInt(0), ScalarDivBackward)
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data[1] = s.data[1] / n
+    else
+        out = Tensor([s.data[1] / n])
+        cache !== nothing && (cache[key] = out)
     end
-    return Base.:/(sum(sq, cache), n, cache)
+    if isempty(out.parents); out.parents = [s]; end
+    out.backward = ScalarDivBackward(s, n)
+    return out
 end
 
 
