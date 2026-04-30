@@ -140,6 +140,30 @@ function Base.sum(t::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=not
     return out
 end
 
+function reduce_sum(t::Tensor, dims; keepdims=false, cache=nothing)
+    key = (objectid(t), UInt(hash((dims, keepdims))), SumBackward)
+
+    # compute the reduction
+    result = sum(t.data, dims=dims)
+    if !keepdims
+        result = dropdims(result, dims=dims)
+    end
+
+    if cache !== nothing && haskey(cache, key)
+        out = cache[key]
+        out.data .= result
+    else
+        out = Tensor(result)
+        cache !== nothing && (cache[key] = out)
+    end
+
+    if isempty(out.parents)
+        out.parents = [t]
+    end
+    out.backward = SumBackward(t, dims, keepdims, size(t.data))
+    return out
+end
+
 function ReLU(t::Tensor; cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=nothing)
     key = (objectid(t), objectid(t), ReLUBackward)
     if cache !== nothing && haskey(cache, key)
