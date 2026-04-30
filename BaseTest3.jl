@@ -4,7 +4,7 @@ using Revise
 import Base: +, *, /, -, size, reshape
 using Random  # For randn and rand
 using LinearAlgebra 
-using NNLib
+using NNlib
 
 abstract type BackwardOp end
 const OpCacheKey = Tuple{UInt, UInt, DataType}
@@ -59,11 +59,20 @@ function matmul(a::Tensor, b::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Ten
     key = (objectid(a), objectid(b), MatMulBackward)
     if cache !== nothing && haskey(cache, key)
         out = cache[key]
-        mul!(out.data, a.data, b.data)
+        if ndims(a.data) <= 2 && ndims(b.data) <= 2
+            mul!(out.data, a.data, b.data)
+        else
+            out.data .= NNlib.batched_mul(a.data, b.data)
+        end
     else
-        out = Tensor(a.data * b.data)
+        result = if ndims(a.data) <= 2 && ndims(b.data) <= 2
+            a.data * b.data
+        else
+            NNlib.batched_mul(a.data, b.data)
+        end
+        out = Tensor(result)
         cache !== nothing && (cache[key] = out)
-        out.parents  = [a, b]
+        out.parents = [a, b]
         out.backward = MatMulBackward(a, b)
     end
     return out
@@ -135,7 +144,7 @@ function Base.sum(t::Tensor, cache::Union{Nothing, Dict{OpCacheKey, Tensor}}=not
         out = Tensor([sum(t.data)])
         cache !== nothing && (cache[key] = out)
         out.parents  = [t]
-        out.backward = SumBackward(t)
+        out.backward = SumBackward(t, nothing, false, size(t.data))
     end
     return out
 end
@@ -154,12 +163,9 @@ function reduce_sum(t::Tensor, dims; keepdims=false, cache=nothing)
     else
         out = Tensor(result)
         cache !== nothing && (cache[key] = out)
+        out.parents  = [t]
+        out.backward = SumBackward(t, dims, keepdims, size(t.data))
     end
-
-    if isempty(out.parents)
-        out.parents = [t]
-    end
-    out.backward = SumBackward(t, dims, keepdims, size(t.data))
     return out
 end
 
@@ -247,16 +253,32 @@ function backward!(op::MulBackward, grad)
     op.b.grad .+= op.a.data .* grad
 end
 
+function backward!(op::MatMulBackward, grad)
+    ensure_grad!(op.a)
+    ensure_grad!(op.b)
+    a_nd = ndims(op.a.data)
+    b_nd = ndims(op.b.data)
+    if a_nd == 2 && b_nd == 1
+        
+        op.a.grad .+= grad * op.b.data'
+        op.b.grad .+= op.a.data' * grad
+    elseif a_nd <= 2 && b_nd <= 2
+        
+        op.a.grad .+= grad * op.b.data'
+        op.b.grad .+= op.a.data' * grad
+    else
+        
+        op.a.grad .+= NNlib.batched_mul(grad,
+                           NNlib.batched_adjoint(op.b.data))
+        op.b.grad .+= NNlib.batched_mul(
+                           NNlib.batched_adjoint(op.a.data), grad)
+    end
+end
+
 function backward!(op::DivBackward, grad)
     ensure_grad!(op.a); ensure_grad!(op.b)
     op.a.grad .+= (1 ./ op.b.data) .* grad
     op.b.grad .-= (op.a.data ./ (op.b.data .^ 2)) .* grad
-end
-
-function backward!(op::MatMulBackward, grad)
-    ensure_grad!(op.a); ensure_grad!(op.b)
-    op.a.grad .+= grad * op.b.data'
-    op.b.grad .+= op.a.data' * grad
 end
 
 function backward!(op::SumBackward, grad)
@@ -550,9 +572,9 @@ model = Model(
 function clip_grad!(layer::Layer, max_norm::Real)
     for param in [layer.w, layer.b]
         if param.grad !== nothing
-            norm = norm(param.grad)
-            if norm > max_norm
-                param.grad .*= max_norm / norm
+            norm_ = norm(param.grad)
+            if norm_ > max_norm
+                param.grad .*= max_norm / norm_
             end
         end
     end
