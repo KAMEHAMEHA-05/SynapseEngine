@@ -363,6 +363,9 @@ function quick_sig(loss::Tensor, param_ids::Set{UInt})
     h = UInt(0)
     for p in loss.parents
         h = hash(objectid(p), h)
+        for pp in p.parents
+            h = hash(objectid(pp), h)
+        end
     end
     return h
 end
@@ -470,7 +473,7 @@ model = Model(
 function clip_grad!(layer::Layer, max_norm::Real)
     for param in [layer.w, layer.b]
         if param.grad !== nothing
-            norm = sqrt(sum(param.grad .^ 2))
+            norm = norm(param.grad)
             if norm > max_norm
                 param.grad .*= max_norm / norm
             end
