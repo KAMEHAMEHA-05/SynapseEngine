@@ -4,6 +4,7 @@ using Revise
 import Base: +, *, /, -, size, reshape
 using Random  # For randn and rand
 using LinearAlgebra 
+using NNLib
 
 abstract type BackwardOp end
 const OpCacheKey = Tuple{UInt, UInt, DataType}
@@ -34,7 +35,21 @@ struct SubBackward     <: BackwardOp; a::Tensor; b::Tensor; end
 struct MulBackward     <: BackwardOp; a::Tensor; b::Tensor; end
 struct DivBackward     <: BackwardOp; a::Tensor; b::Tensor; end
 struct MatMulBackward  <: BackwardOp; a::Tensor; b::Tensor; end
-struct SumBackward     <: BackwardOp; t::Tensor;            end
+struct SumBackward <: BackwardOp
+    t::Tensor
+    dims::Union{Nothing, Int, Tuple}
+    keepdims::Bool
+    input_size::Tuple
+end
+struct ScalarDivBackward <: BackwardOp
+    t::Tensor
+    n::Real
+end
+struct SoftmaxBackward <: BackwardOp
+    t::Tensor
+    out::Tensor
+    dims::Int
+end
 struct ReLUBackward    <: BackwardOp; t::Tensor;            end
 struct LeakyReLUBackward <: BackwardOp; t::Tensor; alpha::Float32; end
 struct LinearBackward  <: BackwardOp; t::Tensor;            end
@@ -199,7 +214,15 @@ end
 
 function backward!(op::SumBackward, grad)
     ensure_grad!(op.t)
-    op.t.grad .+= grad[1]
+    if op.dims === nothing
+        op.t.grad .+= grad[1]
+    else
+        g_shape = ntuple(
+            i -> i in (op.dims isa Int ? (op.dims,) : op.dims) ? 1 : size(op.t.data, i),
+            ndims(op.t.data)
+        )
+        op.t.grad .+= reshape(op.keepdims ? grad : reshape(grad, g_shape), g_shape)
+    end
 end
 
 function backward!(op::ReLUBackward, grad)
