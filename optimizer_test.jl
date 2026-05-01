@@ -1,6 +1,6 @@
 include("BaseTest3.jl")
 
-# XOR — needs nonlinearity, tests multi-layer gradient flow
+
 T = Float32
 l1 = Layer(T, 2, 4, xavier_init, LeakyReLU)
 l2 = Layer(T, 4, 1, xavier_init, Linear)
