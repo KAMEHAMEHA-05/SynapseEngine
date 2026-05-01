@@ -3,7 +3,6 @@
 using ..Core
 using ..Losses
 using ..Optimizers
-include("utils.jl")
 
 function backprop!(model::Model, loss::Tensor)
     if model._stable_topo === nothing
