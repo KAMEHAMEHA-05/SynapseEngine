@@ -7,6 +7,7 @@ using LinearAlgebra
 using NNlib
 
 abstract type BackwardOp end
+abstract type Optimizer end
 const OpCacheKey = Tuple{UInt, UInt, DataType}
 
 mutable struct Tensor{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
@@ -357,7 +358,9 @@ end
 
 function xavier_init(::Type{T}, out_dim, in_dim) where T
     scale = T(sqrt(2.0 / in_dim))
-    return randn(T, out_dim, in_dim) .* scale, zeros(T, out_dim)
+    W = randn(T, out_dim, in_dim) .* scale
+    b = randn(T, out_dim) .* T(0.01)   
+    return W, b
 end
 
 function identity_init(::Type{T}, out_dim, in_dim) where T
@@ -406,6 +409,9 @@ function Model(layers::Vector, forward::Function)
 end
 
 function (model::Model)(x::AbstractArray)
+    T = eltype(model.layers[1].w.data)
+    x = T.(x)  
+    
     if model._input === nothing
         model._input = Tensor(copy(x))
         model._input.grad = similar(model._input.data)
@@ -552,15 +558,15 @@ Random.seed!(48)
 #     end
 # )
 
-T = Float32
-l1 = Layer(T, 1, 1, xavier_init, LeakyReLU)
+# T = Float32
+# l1 = Layer(T, 1, 1, xavier_init, LeakyReLU)
 
-model = Model(
-    [l1],
-    function(x::Tensor)
-        return l1(x)
-    end
-)
+# model = Model(
+#     [l1],
+#     function(x::Tensor)
+#         return l1(x)
+#     end
+# )
 
 # x = model(Tensor([1.133, -0.012184, -1.824]))
 # println("Model output: ", x.data)
@@ -568,6 +574,96 @@ model = Model(
 # y = Tensor([60.0])
 # loss = mse_loss(x, y)
 # println("MSE Loss: ", loss.data)
+
+
+mutable struct SGD <: Optimizer
+    lr::Float32
+    momentum::Float32
+    velocity::Dict{UInt, AbstractArray}  
+end
+
+SGD(; lr=0.01f0, momentum=0.0f0) = SGD(lr, momentum, Dict())
+
+function step!(opt::SGD, params::Vector{Tensor})
+    for p in params
+        p.grad === nothing && continue
+        id = objectid(p)
+        if opt.momentum > 0
+            if !haskey(opt.velocity, id)
+                opt.velocity[id] = similar(p.grad)
+                fill!(opt.velocity[id], 0)
+            end
+            opt.velocity[id] .= opt.momentum .* opt.velocity[id] .+ p.grad
+            p.data .-= opt.lr .* opt.velocity[id]
+        else
+            p.data .-= opt.lr .* p.grad
+        end
+    end
+end
+
+mutable struct Adam <: Optimizer
+    lr::Float32
+    beta1::Float32
+    beta2::Float32
+    eps::Float32
+    t::Int
+    m::Dict{UInt, AbstractArray}   
+    v::Dict{UInt, AbstractArray}  
+end
+
+Adam(; lr=1f-3, beta1=0.9f0, beta2=0.999f0, eps=1f-8) =
+    Adam(lr, beta1, beta2, eps, 0, Dict(), Dict())
+
+function step!(opt::Adam, params::Vector{Tensor})
+    opt.t += 1
+    for p in params
+        p.grad === nothing && continue
+        id = objectid(p)
+        if !haskey(opt.m, id)
+            opt.m[id] = similar(p.grad); fill!(opt.m[id], 0)
+            opt.v[id] = similar(p.grad); fill!(opt.v[id], 0)
+        end
+        g = p.grad
+        opt.m[id] .= opt.beta1 .* opt.m[id] .+ (1 - opt.beta1) .* g
+        opt.v[id] .= opt.beta2 .* opt.v[id] .+ (1 - opt.beta2) .* g.^2
+        m̂ = opt.m[id] ./ (1 - opt.beta1^opt.t)
+        v̂ = opt.v[id] ./ (1 - opt.beta2^opt.t)
+        p.data .-= opt.lr .* m̂ ./ (sqrt.(v̂) .+ opt.eps)
+    end
+end
+
+mutable struct AdamW <: Optimizer
+    lr::Float32
+    beta1::Float32
+    beta2::Float32
+    eps::Float32
+    weight_decay::Float32
+    t::Int
+    m::Dict{UInt, AbstractArray}
+    v::Dict{UInt, AbstractArray}
+end
+
+AdamW(; lr=1f-3, beta1=0.9f0, beta2=0.999f0, eps=1f-8, weight_decay=0.01f0) =
+    AdamW(lr, beta1, beta2, eps, weight_decay, 0, Dict(), Dict())
+
+function step!(opt::AdamW, params::Vector{Tensor})
+    opt.t += 1
+    for p in params
+        p.grad === nothing && continue
+        id = objectid(p)
+        if !haskey(opt.m, id)
+            opt.m[id] = similar(p.grad); fill!(opt.m[id], 0)
+            opt.v[id] = similar(p.grad); fill!(opt.v[id], 0)
+        end
+        g = p.grad
+        opt.m[id] .= opt.beta1 .* opt.m[id] .+ (1 - opt.beta1) .* g
+        opt.v[id] .= opt.beta2 .* opt.v[id] .+ (1 - opt.beta2) .* g.^2
+        m̂ = opt.m[id] ./ (1 - opt.beta1^opt.t)
+        v̂ = opt.v[id] ./ (1 - opt.beta2^opt.t)
+        # weight decay applied directly to weights, not gradients
+        p.data .-= opt.lr .* (m̂ ./ (sqrt.(v̂) .+ opt.eps) .+ opt.weight_decay .* p.data)
+    end
+end
 
 function clip_grad!(layer::Layer, max_norm::Real)
     for param in [layer.w, layer.b]
@@ -580,28 +676,42 @@ function clip_grad!(layer::Layer, max_norm::Real)
     end
 end
 
-function train!(model::Model, x::Tensor, y::Tensor, lr::Real, loss_fn::F = mse_loss) where F
+function register_params!(model::Model, tensors::Tensor...)
+    for t in tensors
+        push!(model._param_ids, objectid(t))
+    end
+end
+
+function model_params(model::Model)
+    params = Tensor[]
+    for layer in model.layers
+        layer.trainable || continue
+        push!(params, layer.w)
+        push!(params, layer.b)
+    end
+    return params
+end
+
+function clip_grad_tensor!(p::Tensor, max_norm::Real)
+    p.grad === nothing && return
+    n = norm(p.grad)
+    n > max_norm && (p.grad .*= max_norm / n)
+end
+
+function train!(model::Model, x, y::Tensor, opt::Optimizer, loss_fn::F=mse_loss) where F
     pred = model(x)
     loss = loss_fn(pred, y, get_cache(model))
     backprop!(model, loss)
-    for layer in model.layers
-        clip_grad!(layer, 1.0)  # Clip gradients to prevent exploding gradients
-        if layer.trainable
-            if layer.w.grad !== nothing
-                layer.w.data .-= lr .* layer.w.grad
-            end
-            if layer.b.grad !== nothing
-                layer.b.data .-= lr .* layer.b.grad
-            end
-        end
-    end
-    return loss.data[1]
+    params = model_params(model)
+    for p in params; clip_grad_tensor!(p, 1.0f0); end
+    step!(opt, params)
+    return Float32(loss.data[1])
 end
 
-function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn::F = mse_loss) where F
+function fit!(model::Model, x, y::Tensor, opt::Optimizer, epochs::Int, loss_fn::F=mse_loss) where F
     for epoch in 1:epochs
-        l = train!(model, x, y, lr, loss_fn)
-        if(l<1.00e-6 || l===NaN)
+        l = train!(model, x, y, opt, loss_fn)
+        if l < 1f-6 || isnan(l)
             println("Early stopping at epoch $epoch: Loss = $l")
             break
         end
@@ -609,13 +719,15 @@ function fit!(model::Model, x::Tensor, y::Tensor, epochs::Int, lr::Real, loss_fn
     end
 end
 
-# fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor([60.0]), 100, 0.019, mse_loss)
-fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), 1000, 0.1, mse_loss)
+# fit!(model, Tensor([1.133, -0.012184, -1.824]), Tensor(Float32[60.0]), SGD(lr=0.1f0), 1000, mse_loss)
+# fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), SGD(lr=0.1f0), 1000, mse_loss)
+# fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), Adam(lr=0.1f0), 1000, mse_loss)
+# fit!(model, Tensor(Float32[1.133]), Tensor(Float32[60.0]), AdamW(lr=0.1f0, weight_decay=0.1f0), 1000, mse_loss)
 
 
 
+# println(model(Tensor(Float32[1.133])))
 # println(model(Tensor([1.133, -0.012184, -1.824])))
-println(model(Tensor([1.133])))
 
 
 function backprop(loss::Tensor)
